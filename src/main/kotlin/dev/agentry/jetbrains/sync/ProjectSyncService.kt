@@ -85,8 +85,12 @@ class ProjectSyncService(private val project: Project) {
         return installed
     }
 
-    /** Sync in a background task, notify on completion. */
-    fun syncAsync(showSummary: Boolean = true) {
+    /**
+     * Sync in a background task. Optionally notify on completion and fire [onComplete]
+     * once the task finishes (whether or not anything was installed) — used by callers
+     * that need to publish a state-changed event after the async work lands.
+     */
+    fun syncAsync(showSummary: Boolean = true, onComplete: () -> Unit = {}) {
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Agentry: syncing skills", true) {
                 override fun run(indicator: ProgressIndicator) {
@@ -94,6 +98,7 @@ class ProjectSyncService(private val project: Project) {
                     if (showSummary && installed > 0) {
                         notify("Installed $installed skill(s) from .agentry/config.yaml")
                     }
+                    onComplete()
                 }
             }
         )

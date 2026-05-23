@@ -39,12 +39,13 @@ class RegistryManager {
 
     /** Fetch a single source. Returns empty list on validation or git failure. */
     fun fetchSource(source: RegistrySource, progress: ProgressIndicator? = null): List<SkillManifest> {
+        val safeUrl = redactCredentials(source.url)
         if (!InputValidation.isValidRegistryUrl(source.url)) {
-            log.warn("Rejecting registry with invalid URL: '${source.url}'")
+            log.warn("Rejecting registry with invalid URL: '$safeUrl'")
             return emptyList()
         }
         if (!InputValidation.isValidGitRef(source.ref) && source.ref != "HEAD") {
-            log.warn("Rejecting registry '${source.url}' with invalid ref: '${source.ref}'")
+            log.warn("Rejecting registry '$safeUrl' with invalid ref: '${source.ref}'")
             return emptyList()
         }
         return runCatching {
@@ -53,7 +54,10 @@ class RegistryManager {
             else clone(source.url, localDir, source.ref, progress)
             parser.scanDirectory(localDir, source.url, source.ref)
         }.onFailure { e ->
-            log.warn("Failed to fetch registry ${source.url}: ${e.message}")
+            // Don't log the raw exception message — it carries the full git command
+            // (which contains the URL) and any captured stderr. Both can leak secrets.
+            log.warn("Failed to fetch registry $safeUrl (exit message redacted; enable debug logging for details)")
+            log.debug("Registry fetch failure detail", e)
         }.getOrDefault(emptyList())
     }
 
@@ -177,5 +181,14 @@ class RegistryManager {
     private fun sha256(s: String): String {
         val md = MessageDigest.getInstance("SHA-256")
         return md.digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Strip embedded credentials from a URL before it hits `idea.log`. Catches the common
+     * `https://token@host/repo.git` and `https://user:pass@host/repo.git` forms.
+     */
+    private fun redactCredentials(url: String): String {
+        // Matches scheme://userinfo@rest and replaces the userinfo with `***`.
+        return url.replace(Regex("^(\\w+://)[^/@\\s]+@"), "$1***@")
     }
 }

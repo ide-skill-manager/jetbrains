@@ -66,10 +66,12 @@ class SyncConfigAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        ProjectSyncService.getInstance(project).syncAsync()
-        // ProjectSyncService doesn't currently publish on the message bus; do it here so
-        // listeners see the new install state once the background task completes. (The
-        // task runs async, so we hook publishChanged inside its lambda.)
+        // Run with an onComplete hook so SKILLS_CHANGED actually fires when the background
+        // sync finishes — without this any subscribed tool window would miss the new state.
+        ProjectSyncService.getInstance(project).syncAsync(
+            showSummary = true,
+            onComplete = { publishChanged(project) }
+        )
     }
 }
 
@@ -78,7 +80,7 @@ class InstallSkillAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         // Prefer pre-supplied name (e.g. selected list item from the tool window).
-        val name = e.getData(AgentryDataKeys.SKILL_NAME)?.trim()?.ifBlank { null }
+        val name = (e.dataContext.getData(SKILL_NAME_DATA_KEY) as? String)?.trim()?.ifBlank { null }
             ?: Messages.showInputDialog(
                 project, "Skill name to install:", "Agentry: install skill", null
             )?.trim()?.takeIf { it.isNotBlank() }
@@ -129,7 +131,7 @@ class RemoveSkillAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.EDT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val name = e.getData(AgentryDataKeys.SKILL_NAME)?.trim()?.ifBlank { null }
+        val name = (e.dataContext.getData(SKILL_NAME_DATA_KEY) as? String)?.trim()?.ifBlank { null }
             ?: Messages.showInputDialog(
                 project, "Skill name to remove:", "Agentry: remove skill", null
             )?.trim()?.takeIf { it.isNotBlank() }

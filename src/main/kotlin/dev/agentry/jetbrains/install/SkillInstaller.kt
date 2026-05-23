@@ -138,14 +138,23 @@ class SkillInstaller {
      * Look up the source directory for [manifest], scoped to its origin registry *at the
      * exact ref it was fetched from*. Both fields are needed because the cache directory
      * key includes both — the same URL registered at two refs has two cache dirs.
+     *
+     * Rejects symlinks at both the registry-cache root and the per-skill candidate. A
+     * malicious local filesystem (or a future bug) could otherwise replace one of those
+     * directories with a symlink to `~/.ssh/`, bypassing the per-entry symlink check that
+     * `copySkill` performs during the walk.
      */
     private fun resolveSourceDir(manifest: SkillManifest): File? {
         if (manifest.sourceRegistry.isBlank()) return null
         val source = RegistrySource(url = manifest.sourceRegistry, ref = manifest.sourceRef)
         val registryDir = RegistryManager.getInstance().localDirFor(source)
         if (!registryDir.isDirectory) return null
+        if (Files.isSymbolicLink(registryDir.toPath())) {
+            log.warn("Refusing symlinked registry dir: ${registryDir.absolutePath}")
+            return null
+        }
         val candidate = File(registryDir, manifest.name)
-        if (candidate.isDirectory) return candidate
+        if (candidate.isDirectory && !Files.isSymbolicLink(candidate.toPath())) return candidate
         if (parser.scanDirectory(registryDir).any { it.name == manifest.name }) return registryDir
         return null
     }
@@ -157,6 +166,11 @@ class SkillInstaller {
      */
     private fun copySkill(source: File, dest: File) {
         require(source.isDirectory) { "Source is not a directory: $source" }
+        // Reject a symlinked source root before resolving — toRealPath would otherwise
+        // follow the link out of the registry cache.
+        if (Files.isSymbolicLink(source.toPath())) {
+            throw SecurityException("Refusing to copy from symlinked skill source: $source")
+        }
         val sourcePath = source.toPath().toRealPath()
         val destPath = dest.toPath()
         Files.createDirectories(destPath)

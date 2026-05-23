@@ -9,14 +9,16 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.text.StringUtil
+import com.intellij.ui.ColorUtil
+import com.intellij.util.ui.UIUtil
 import com.intellij.ui.SearchTextField
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import dev.agentry.jetbrains.AgentryDisposable
-import dev.agentry.jetbrains.actions.AgentryDataKeys
 import dev.agentry.jetbrains.actions.AgentryTopics
+import dev.agentry.jetbrains.actions.SKILL_NAME_DATA_KEY
 import dev.agentry.jetbrains.actions.SkillsChangedListener
 import dev.agentry.jetbrains.install.SkillInstaller
 import dev.agentry.jetbrains.model.InstallStatus
@@ -56,9 +58,11 @@ class AgentryToolWindowPanel(private val project: Project) {
                 InstallStatus.ERROR -> "⚠ error"
                 else -> ""
             }
+            // Theme-aware "muted" foreground — picks the right gray for light vs. dark.
+            val mutedHex = ColorUtil.toHex(UIUtil.getContextHelpForeground())
             "<html><b>$name</b> <small>v$version</small>" +
                 "<br/><small>$description</small>" +
-                "<br/><small style='color:#888'>$status</small></html>"
+                "<br/><small style='color:#$mutedHex'>$status</small></html>"
         }
     }
     private val searchField = SearchTextField()
@@ -130,7 +134,7 @@ class AgentryToolWindowPanel(private val project: Project) {
         }
         val dataContext = DataContext { dataId ->
             when {
-                skillName != null && dataId == AgentryDataKeys.SKILL_NAME.name -> skillName
+                skillName != null && dataId == SKILL_NAME_DATA_KEY -> skillName
                 dataId == com.intellij.openapi.actionSystem.CommonDataKeys.PROJECT.name -> project
                 else -> null
             }

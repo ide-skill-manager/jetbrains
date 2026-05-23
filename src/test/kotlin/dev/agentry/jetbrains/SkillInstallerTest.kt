@@ -9,10 +9,10 @@ import org.junit.rules.TemporaryFolder
 
 /**
  * Tests for [InstallTarget] path validation (the security-critical pure logic).
- * Full `SkillInstaller` IO behaviour is covered separately under [SkillInstallerIoTest]
- * via a private package-internal copy hook because the production `install()` resolves
- * its source through the application-level `RegistryManager` service (not constructable
- * in plain JUnit).
+ *
+ * End-to-end install / uninstall behaviour against the real application services is
+ * covered in `SkillInstallerIntegrationTest` (BasePlatformTestCase). That includes
+ * the symlink-rejection check on the source root.
  */
 class SkillInstallerTest {
 
