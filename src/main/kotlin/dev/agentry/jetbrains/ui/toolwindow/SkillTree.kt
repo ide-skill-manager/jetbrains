@@ -2,13 +2,9 @@ package dev.agentry.jetbrains.ui.toolwindow
 
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.CheckboxTree
-import com.intellij.ui.CheckboxTreeBase
 import com.intellij.ui.CheckedTreeNode
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
-import com.intellij.util.ui.UIUtil
-import dev.agentry.jetbrains.model.AgentryNode
-import dev.agentry.jetbrains.model.RegistryStatus
 import javax.swing.JTree
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreeNode
@@ -30,12 +26,24 @@ class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null)) {
         rowHeight = 0 // let the renderer dictate row heights (multi-line cells)
     }
 
-    /** Replace the entire tree contents. Restores checked state by skill name. */
+    /**
+     * Replace the entire tree contents. Preserves checked state by skill name and
+     * scroll position. Auto-expands every registry the first time, then leaves
+     * subsequent expansion state alone (registry headers stay open by default).
+     */
     fun setRoot(root: AgentryNode.Root) {
         val previouslyChecked = collectCheckedSkillNames(model.root as TreeNode)
+        val expandedUrls = collectExpandedRegistryUrls()
+        val scrollY = (parent as? javax.swing.JViewport)?.viewPosition?.y ?: 0
+
         model = DefaultTreeModel(root)
         applyCheckedState(root, previouslyChecked)
-        expandRegistryRowsByDefault()
+        expandRegistries(root, expandedUrls)
+
+        // Restore scroll asynchronously so layout has settled.
+        javax.swing.SwingUtilities.invokeLater {
+            (parent as? javax.swing.JViewport)?.let { it.viewPosition = java.awt.Point(0, scrollY) }
+        }
     }
 
     /** Skills the user has currently ticked. */
@@ -93,14 +101,41 @@ class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null)) {
         }
     }
 
-    private fun expandRegistryRowsByDefault() {
-        // Auto-expand every registry row so the user sees the skills without an extra click.
-        var row = 0
-        while (row < rowCount) {
-            expandRow(row)
-            row++
+    /**
+     * Expand registry rows in O(n) via path-based expansion. If [previouslyExpanded] is
+     * empty (first load), expand all registries; otherwise restore prior expansion state
+     * keyed by registry URL+ref.
+     */
+    private fun expandRegistries(root: AgentryNode.Root, previouslyExpanded: Set<String>) {
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i)
+            if (child is AgentryNode.Registry) {
+                val key = registryKey(child)
+                if (previouslyExpanded.isEmpty() || key in previouslyExpanded) {
+                    expandPath(javax.swing.tree.TreePath(arrayOf<Any>(root, child)))
+                }
+            }
+            if (child is AgentryNode.OrphanGroup) {
+                expandPath(javax.swing.tree.TreePath(arrayOf<Any>(root, child)))
+            }
         }
     }
+
+    private fun collectExpandedRegistryUrls(): Set<String> {
+        val out = mutableSetOf<String>()
+        val root = model.root as? TreeNode ?: return out
+        for (i in 0 until root.childCount) {
+            val child = root.getChildAt(i)
+            if (child is AgentryNode.Registry) {
+                val path = javax.swing.tree.TreePath(arrayOf<Any>(root, child))
+                if (isExpanded(path)) out += registryKey(child)
+            }
+        }
+        return out
+    }
+
+    private fun registryKey(node: AgentryNode.Registry): String =
+        "${node.source.url}@${node.source.ref}"
 }
 
 /**
@@ -195,7 +230,3 @@ private class SkillTreeRenderer : CheckboxTree.CheckboxTreeCellRenderer(/*opaque
     private fun pluralize(word: String, n: Int): String = if (n == 1) word else "${word}s"
 }
 
-@Suppress("unused")
-private val _muteUnusedImport = UIUtil::class // keep import for future styling additions
-@Suppress("unused")
-private val _muteCheckboxTreeBase = CheckboxTreeBase::class // imported by inheritance documentation

@@ -27,90 +27,100 @@ import dev.agentry.jetbrains.settings.AgentrySettings
 class BatchOperations {
 
     fun installByNames(project: Project, skillNames: List<String>) {
-        if (skillNames.isEmpty()) return
-        ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, "Agentry: installing ${skillNames.size} skill(s)", true) {
-                override fun run(indicator: ProgressIndicator) {
-                    indicator.isIndeterminate = false
-                    val settings = AgentrySettings.getInstance()
-                    val sources = settings.registrySources.map {
-                        RegistrySource(it.url, it.ref, it.enabled, it.displayName)
-                    }.filter { it.enabled }
-                    indicator.text = "Refreshing registries…"
-                    val manifests = RegistryManager.getInstance().fetchAll(sources, indicator).values.flatten()
-                    val byName: Map<String, SkillManifest> = manifests.associateBy { it.name }
-                    val results = mutableListOf<BatchOutcome>()
-                    skillNames.forEachIndexed { idx, name ->
-                        if (indicator.isCanceled) return@forEachIndexed
-                        indicator.fraction = idx.toDouble() / skillNames.size
-                        indicator.text = "Installing $name…"
-                        val manifest = byName[name]
-                        if (manifest == null) {
-                            results += BatchOutcome(name, success = false, "not found in any enabled registry")
-                            return@forEachIndexed
-                        }
-                        val r = SkillInstaller.getInstance()
-                            .install(manifest, settings.defaultInstallTarget, project.basePath)
-                        results += BatchOutcome(
-                            name = name,
-                            success = r.isSuccess,
-                            errorMessage = r.exceptionOrNull()?.message
-                        )
-                    }
-                    notifySummary(project, "install", results)
-                    publishChanged(project)
-                }
-            }
-        )
+        runBatch(project, "install", skillNames, prefetchManifests = true) { name, indicator, manifestsByName ->
+            val manifest = manifestsByName[name]
+                ?: return@runBatch BatchOutcome(name, false, "not found in any enabled registry")
+            indicator.text = "Installing $name…"
+            val r = SkillInstaller.getInstance()
+                .install(manifest, AgentrySettings.getInstance().defaultInstallTarget, project.basePath)
+            BatchOutcome(name, r.isSuccess, r.exceptionOrNull()?.message)
+        }
     }
 
     fun uninstallByNames(project: Project, skillNames: List<String>) {
+        runBatch(project, "remove", skillNames, prefetchManifests = false) { name, indicator, _ ->
+            indicator.text = "Removing $name…"
+            val r = SkillInstaller.getInstance()
+                .uninstall(name, AgentrySettings.getInstance().defaultInstallTarget, project.basePath)
+            BatchOutcome(name, r.isSuccess, r.exceptionOrNull()?.message)
+        }
+    }
+
+    /**
+     * Shared scaffolding for both install and uninstall. One background task per batch,
+     * determinate progress, per-item Result aggregation, single summary notification,
+     * single `SKILLS_CHANGED` event. Cancellation interrupts the loop and the summary
+     * reports it explicitly.
+     */
+    private fun runBatch(
+        project: Project,
+        verb: String,
+        skillNames: List<String>,
+        prefetchManifests: Boolean,
+        perItem: (name: String, ProgressIndicator, Map<String, SkillManifest>) -> BatchOutcome
+    ) {
         if (skillNames.isEmpty()) return
         ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, "Agentry: removing ${skillNames.size} skill(s)", true) {
+            object : Task.Backgroundable(project, "Agentry: ${verb}ing ${skillNames.size} skill(s)", true) {
                 override fun run(indicator: ProgressIndicator) {
                     indicator.isIndeterminate = false
-                    val settings = AgentrySettings.getInstance()
+                    val manifestsByName: Map<String, SkillManifest> = if (prefetchManifests) {
+                        indicator.text = "Refreshing registries…"
+                        val sources = AgentrySettings.getInstance().registrySources
+                            .map { RegistrySource(it.url, it.ref, it.enabled, it.displayName) }
+                            .filter { it.enabled }
+                        RegistryManager.getInstance().fetchAll(sources, indicator).values.flatten()
+                            .associateBy { it.name }
+                    } else emptyMap()
                     val results = mutableListOf<BatchOutcome>()
                     skillNames.forEachIndexed { idx, name ->
                         if (indicator.isCanceled) return@forEachIndexed
                         indicator.fraction = idx.toDouble() / skillNames.size
-                        indicator.text = "Removing $name…"
-                        val r = SkillInstaller.getInstance()
-                            .uninstall(name, settings.defaultInstallTarget, project.basePath)
-                        results += BatchOutcome(
-                            name = name,
-                            success = r.isSuccess,
-                            errorMessage = r.exceptionOrNull()?.message
-                        )
+                        results += perItem(name, indicator, manifestsByName)
                     }
-                    notifySummary(project, "remove", results)
+                    notifySummary(project, verb, results, cancelled = indicator.isCanceled)
                     publishChanged(project)
                 }
             }
         )
     }
 
-    private fun notifySummary(project: Project, verb: String, results: List<BatchOutcome>) {
+    private fun notifySummary(
+        project: Project,
+        verb: String,
+        results: List<BatchOutcome>,
+        cancelled: Boolean
+    ) {
         val succeeded = results.count { it.success }
         val failed = results.count { !it.success }
-        val (type, body) = when {
-            failed == 0 -> NotificationType.INFORMATION to "${verb.replaceFirstChar { it.titlecase() }}ed $succeeded skill(s)."
-            succeeded == 0 -> NotificationType.ERROR to "Failed to $verb ${results.size} skill(s). First error: ${results.first { !it.success }.message()}"
-            else -> NotificationType.WARNING to "${verb.replaceFirstChar { it.titlecase() }}ed $succeeded skill(s), $failed failed. First error: ${results.first { !it.success }.message()}"
+        val verbed = "${verb.replaceFirstChar { it.titlecase() }}ed"
+        val firstErr = results.firstOrNull { !it.success }?.message()?.let { " First error: $it" }.orEmpty()
+        val type = when {
+            failed == 0 && !cancelled -> NotificationType.INFORMATION
+            succeeded == 0 -> NotificationType.ERROR
+            else -> NotificationType.WARNING
         }
-        ApplicationManager.getApplication().invokeLater {
-            NotificationGroupManager.getInstance()
-                .getNotificationGroup("Agentry")
-                .createNotification(body, type)
-                .notify(project)
+        val body = buildString {
+            append("$verbed $succeeded skill(s)")
+            if (failed > 0) append(", $failed failed.$firstErr") else append(".")
+            if (cancelled) append(" (cancelled)")
         }
+        ApplicationManager.getApplication().invokeLater(
+            { if (!project.isDisposed) {
+                NotificationGroupManager.getInstance()
+                    .getNotificationGroup("Agentry")
+                    .createNotification(body, type)
+                    .notify(project)
+            } },
+            { project.isDisposed }
+        )
     }
 
     private fun publishChanged(project: Project) {
-        ApplicationManager.getApplication().invokeLater {
-            project.messageBus.syncPublisher(AgentryTopics.SKILLS_CHANGED).skillsChanged()
-        }
+        ApplicationManager.getApplication().invokeLater(
+            { if (!project.isDisposed) project.messageBus.syncPublisher(AgentryTopics.SKILLS_CHANGED).skillsChanged() },
+            { project.isDisposed }
+        )
     }
 
     private data class BatchOutcome(val name: String, val success: Boolean, val errorMessage: String?) {

@@ -12,11 +12,12 @@ import com.intellij.openapi.project.Project
 import com.intellij.ui.SearchTextField
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
+import com.intellij.util.Alarm
 import dev.agentry.jetbrains.AgentryDisposable
 import dev.agentry.jetbrains.actions.AgentryTopics
 import dev.agentry.jetbrains.actions.SELECTED_SKILLS_DATA_KEY
 import dev.agentry.jetbrains.actions.SkillsChangedListener
-import dev.agentry.jetbrains.model.AgentryNode
+import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
 import dev.agentry.jetbrains.settings.AgentrySettings
 import java.awt.BorderLayout
 import javax.swing.Box
@@ -48,6 +49,8 @@ class AgentryToolWindowPanel(private val project: Project) {
     val root: JPanel = buildPanel()
 
     private var lastBuilt: AgentryNode.Root = AgentryNode.Root()
+    private val filterAlarm: Alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, AgentryDisposable.forProject(project))
+    private val filterDebounceMs = 200
 
     init {
         refreshButton.addActionListener { reloadEntries() }
@@ -69,9 +72,9 @@ class AgentryToolWindowPanel(private val project: Project) {
         }
 
         searchField.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) = applyFilter()
-            override fun removeUpdate(e: DocumentEvent) = applyFilter()
-            override fun changedUpdate(e: DocumentEvent) = applyFilter()
+            override fun insertUpdate(e: DocumentEvent) = scheduleFilter()
+            override fun removeUpdate(e: DocumentEvent) = scheduleFilter()
+            override fun changedUpdate(e: DocumentEvent) = scheduleFilter()
         })
 
         // Re-render whenever something mutated state.
@@ -118,15 +121,22 @@ class AgentryToolWindowPanel(private val project: Project) {
                 override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
                     val root = SkillTreeBuilder.build(settings.defaultInstallTarget, basePath)
                     ApplicationManager.getApplication().invokeLater {
+                        if (project.isDisposed) return@invokeLater
                         lastBuilt = root
-                        skillTree.setRoot(root)
+                        // Apply the current filter (if any) and install in one shot — avoids
+                        // a flash of the unfiltered tree between setRoot and the filter pass.
+                        skillTree.setRoot(filteredRoot(searchField.text.trim().lowercase()))
                         statusLabel.text = describeStatus(root)
                         updateActionButtonState()
-                        applyFilter()
                     }
                 }
             }
         )
+    }
+
+    private fun scheduleFilter() {
+        filterAlarm.cancelAllRequests()
+        filterAlarm.addRequest({ applyFilter() }, filterDebounceMs)
     }
 
     private fun describeStatus(root: AgentryNode.Root): String {
@@ -143,45 +153,50 @@ class AgentryToolWindowPanel(private val project: Project) {
     }
 
     private fun applyFilter() {
-        val q = searchField.text.trim().lowercase()
-        if (q.isBlank()) {
-            // Nothing to do — full tree is already shown.
-            skillTree.setRoot(lastBuilt)
-            return
-        }
-        // Re-build a filtered tree from lastBuilt.
-        val filteredRoot = AgentryNode.Root()
+        if (project.isDisposed) return
+        skillTree.setRoot(filteredRoot(searchField.text.trim().lowercase()))
+    }
+
+    /**
+     * Build the tree shown to the user — either the full [lastBuilt] (when [query] is
+     * blank) or a copy that includes only matching skills. Called by both [applyFilter]
+     * and [reloadEntries] to keep one source of truth for what `setRoot` receives.
+     */
+    private fun filteredRoot(query: String): AgentryNode.Root {
+        if (query.isBlank()) return lastBuilt
+        val out = AgentryNode.Root()
         for (i in 0 until lastBuilt.childCount) {
-            val child = lastBuilt.getChildAt(i)
-            when (child) {
+            when (val child = lastBuilt.getChildAt(i)) {
                 is AgentryNode.Registry -> {
                     val matching = (0 until child.childCount)
                         .map { child.getChildAt(it) as AgentryNode.Skill }
-                        .filter { it.matches(q) }
+                        .filter { it.matches(query) }
                     if (matching.isNotEmpty()) {
                         val copy = AgentryNode.Registry(child.source, child.status, matching.size)
-                        matching.forEach {
-                            val skill = AgentryNode.Skill(it.manifest, it.installed)
-                            skill.isChecked = it.isChecked
+                        matching.forEach { src ->
+                            val skill = AgentryNode.Skill(src.manifest, src.installed)
+                            skill.isChecked = src.isChecked
                             copy.add(skill)
                         }
-                        filteredRoot.add(copy)
+                        out.add(copy)
                     }
                 }
                 is AgentryNode.OrphanGroup -> {
                     val matching = (0 until child.childCount)
                         .map { child.getChildAt(it) as AgentryNode.Orphan }
-                        .filter { it.name.lowercase().contains(q) }
+                        .filter { it.name.lowercase().contains(query) }
                     if (matching.isNotEmpty()) {
                         val copy = AgentryNode.OrphanGroup(matching.size)
-                        matching.forEach { copy.add(AgentryNode.Orphan(it.installed).apply { isChecked = it.isChecked }) }
-                        filteredRoot.add(copy)
+                        matching.forEach { src ->
+                            copy.add(AgentryNode.Orphan(src.installed).apply { isChecked = src.isChecked })
+                        }
+                        out.add(copy)
                     }
                 }
                 else -> {}
             }
         }
-        skillTree.setRoot(filteredRoot)
+        return out
     }
 
     private fun AgentryNode.Skill.matches(q: String): Boolean =
@@ -202,8 +217,12 @@ class AgentryToolWindowPanel(private val project: Project) {
 
     /**
      * Fire a named action with a data context carrying the project and (optionally) the
-     * pre-selected skill names. Mirrors the [com.intellij.openapi.actionSystem.DataContext]
-     * pattern used in single-skill actions.
+     * pre-selected skill names.
+     *
+     * We invoke `action.actionPerformed(event)` directly rather than going through
+     * `ActionManager.tryToExecute`. The latter requires a non-null `InputEvent` and
+     * silently no-ops with our synthetic event when the action's update thread is BGT,
+     * which would make the Install / Uninstall selected buttons appear to do nothing.
      */
     private fun fireAction(actionId: String, skillNames: List<String>) {
         val action = ActionManager.getInstance().getAction(actionId) ?: run {
@@ -217,6 +236,6 @@ class AgentryToolWindowPanel(private val project: Project) {
             }
         }
         val event = AnActionEvent.createFromDataContext("AgentryToolWindow", Presentation(), dataContext)
-        ActionManager.getInstance().tryToExecute(action, event.inputEvent, root, "AgentryToolWindow", true)
+        action.actionPerformed(event)
     }
 }

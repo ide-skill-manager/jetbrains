@@ -1,6 +1,9 @@
-package dev.agentry.jetbrains.model
+package dev.agentry.jetbrains.ui.toolwindow
 
 import com.intellij.ui.CheckedTreeNode
+import dev.agentry.jetbrains.model.InstalledSkill
+import dev.agentry.jetbrains.model.RegistrySource
+import dev.agentry.jetbrains.model.SkillManifest
 import java.io.File
 
 /**

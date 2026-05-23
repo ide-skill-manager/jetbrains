@@ -1,9 +1,9 @@
 package dev.agentry.jetbrains.ui.toolwindow
 
 import dev.agentry.jetbrains.install.SkillInstaller
-import dev.agentry.jetbrains.model.AgentryNode
+import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
 import dev.agentry.jetbrains.model.InstallTarget
-import dev.agentry.jetbrains.model.RegistryStatus
+import dev.agentry.jetbrains.ui.toolwindow.RegistryStatus
 import dev.agentry.jetbrains.model.RegistrySource
 import dev.agentry.jetbrains.model.SkillManifest
 import dev.agentry.jetbrains.registry.RegistryManager

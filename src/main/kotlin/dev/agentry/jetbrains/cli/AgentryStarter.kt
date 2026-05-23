@@ -5,6 +5,7 @@ import com.intellij.openapi.application.ApplicationStarter
 import dev.agentry.jetbrains.install.SkillInstaller
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.RegistrySource
+import dev.agentry.jetbrains.registry.BranchListService
 import dev.agentry.jetbrains.registry.RegistryManager
 import dev.agentry.jetbrains.settings.AgentrySettings
 import dev.agentry.jetbrains.util.InputValidation
@@ -35,11 +36,13 @@ class AgentryStarter : ApplicationStarter {
         val rest = args.drop(2)
         val code = try {
             when (sub) {
-                "list" -> cmdList()
+                "list" -> cmdList(rest)
                 "installed" -> cmdInstalled(parseTarget(rest))
                 "install" -> cmdInstall(rest)
                 "remove" -> cmdRemove(rest)
                 "refresh" -> cmdRefresh()
+                "refs" -> cmdRefs(rest)
+                "registries" -> cmdRegistries()
                 null, "help", "--help", "-h" -> { printUsage(); 0 }
                 else -> { printUsage(); 1 }
             }
@@ -51,15 +54,49 @@ class AgentryStarter : ApplicationStarter {
         exitProcess(code)
     }
 
-    private fun cmdList(): Int {
+    private fun cmdList(rest: List<String>): Int {
+        val registryFilter = optionValue(rest, "--registry")
+        val searchFilter = optionValue(rest, "--search")?.lowercase()
         val sources = enabledSources()
         val manifests = RegistryManager.getInstance().fetchAll(sources).values.flatten()
-        // sourceRegistry should already be redacted by RegistryManager.fetchSource, but
-        // run it again defensively so an unredacted path can never leak to stdout.
-        manifests.forEach {
-            println("${it.name}\t${it.version}\t${InputValidation.redactCredentials(it.sourceRegistry)}")
+        manifests
+            .filter { m ->
+                val source = InputValidation.redactCredentials(m.sourceRegistry)
+                (registryFilter == null || source.contains(registryFilter) ||
+                    sources.firstOrNull { it.url == m.sourceRegistry }?.displayName?.contains(registryFilter) == true) &&
+                (searchFilter == null || m.name.lowercase().contains(searchFilter)
+                    || m.description.lowercase().contains(searchFilter))
+            }
+            .forEach {
+                println("${it.name}\t${it.version}\t${InputValidation.redactCredentials(it.sourceRegistry)}")
+            }
+        return 0
+    }
+
+    private fun cmdRefs(rest: List<String>): Int {
+        val url = rest.firstOrNull() ?: return usageErr("refs requires a registry URL")
+        val refs = BranchListService.getInstance().fetch(url).getOrElse {
+            return failed("ls-remote failed: ${it.message}")
+        }
+        refs.defaultRef?.let { println("default\t$it") }
+        refs.branches.forEach { println("branch\t$it") }
+        refs.tags.forEach { println("tag\t$it") }
+        return 0
+    }
+
+    private fun cmdRegistries(): Int {
+        AgentrySettings.getInstance().registrySources.forEach { src ->
+            val safeUrl = InputValidation.redactCredentials(src.url)
+            val state = if (src.enabled) "enabled" else "disabled"
+            val displayName = src.displayName.ifBlank { safeUrl }
+            println("$displayName\t$safeUrl\t${src.ref}\t$state")
         }
         return 0
+    }
+
+    private fun optionValue(args: List<String>, flag: String): String? {
+        val idx = args.indexOf(flag)
+        return if (idx >= 0 && idx + 1 < args.size) args[idx + 1] else null
     }
 
     private fun cmdInstalled(target: InstallTarget): Int {
@@ -70,25 +107,44 @@ class AgentryStarter : ApplicationStarter {
     }
 
     private fun cmdInstall(rest: List<String>): Int {
-        val name = rest.firstOrNull() ?: return usageErr("install requires a skill name")
-        val target = parseTarget(rest.drop(1))
-        val manifest = RegistryManager.getInstance()
+        val names = rest.takeWhile { !it.startsWith("--") }
+        if (names.isEmpty()) return usageErr("install requires at least one skill name")
+        val target = parseTarget(rest)
+        val manifestsByName = RegistryManager.getInstance()
             .fetchAll(enabledSources()).values.flatten()
-            .firstOrNull { it.name == name }
-            ?: return failed("skill '$name' not found in any enabled registry")
-        val result = SkillInstaller.getInstance().install(manifest, target, projectBasePathOrNull())
-        return if (result.isSuccess) {
-            println("installed: ${result.getOrThrow().absolutePath}"); 0
-        } else {
-            failed("install failed: ${result.exceptionOrNull()?.message}")
+            .associateBy { it.name }
+        var failures = 0
+        names.forEach { name ->
+            val manifest = manifestsByName[name]
+            if (manifest == null) {
+                System.err.println("agentry: '$name' not found in any enabled registry")
+                failures++
+                return@forEach
+            }
+            val result = SkillInstaller.getInstance().install(manifest, target, projectBasePathOrNull())
+            if (result.isSuccess) {
+                println("installed: ${result.getOrThrow().absolutePath}")
+            } else {
+                System.err.println("agentry: install '$name' failed: ${result.exceptionOrNull()?.message}")
+                failures++
+            }
         }
+        return if (failures == 0) 0 else 2
     }
 
     private fun cmdRemove(rest: List<String>): Int {
-        val name = rest.firstOrNull() ?: return usageErr("remove requires a skill name")
-        val target = parseTarget(rest.drop(1))
-        val result = SkillInstaller.getInstance().uninstall(name, target, projectBasePathOrNull())
-        return if (result.isSuccess) 0 else failed("remove failed: ${result.exceptionOrNull()?.message}")
+        val names = rest.takeWhile { !it.startsWith("--") }
+        if (names.isEmpty()) return usageErr("remove requires at least one skill name")
+        val target = parseTarget(rest)
+        var failures = 0
+        names.forEach { name ->
+            val result = SkillInstaller.getInstance().uninstall(name, target, projectBasePathOrNull())
+            if (result.isFailure) {
+                System.err.println("agentry: remove '$name' failed: ${result.exceptionOrNull()?.message}")
+                failures++
+            }
+        }
+        return if (failures == 0) 0 else 2
     }
 
     private fun cmdRefresh(): Int {
@@ -131,11 +187,13 @@ class AgentryStarter : ApplicationStarter {
             Usage: idea agentry <command> [args]
 
             Commands:
-              list                                    list available skills
-              installed [--target T]                  list installed skills at target T
-              install <name> [--target T]             install a skill
-              remove  <name> [--target T]             uninstall a skill
-              refresh                                 fetch all enabled registries
+              list [--registry R] [--search S]              list available skills
+              installed [--target T]                        list installed skills at target T
+              install <name>… [--target T]                  install one or more skills
+              remove  <name>… [--target T]                  uninstall one or more skills
+              refresh                                       fetch all enabled registries
+              refs <url>                                    list branches/tags exposed by a registry URL
+              registries                                    list configured registries with status
 
             Targets: ${enumValues<InstallTarget>().joinToString { it.name }}
         """.trimIndent())

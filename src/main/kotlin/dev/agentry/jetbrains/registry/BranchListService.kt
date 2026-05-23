@@ -20,7 +20,9 @@ import java.util.concurrent.TimeUnit
  * credential prompts, output drained safely, child process reaped on timeout/cancel.
  */
 @Service(Service.Level.APP)
-class BranchListService {
+class BranchListService internal constructor() {
+    // Constructor is `internal` so tests can build a fresh parser-only instance.
+    // Production callers should always go through [getInstance] to share the cache.
 
     private val log = logger<BranchListService>()
     private val cache = ConcurrentHashMap<String, CacheEntry>()
@@ -34,10 +36,21 @@ class BranchListService {
         if (!InputValidation.isValidRegistryUrl(url)) {
             return Result.failure(IllegalArgumentException("Invalid registry URL"))
         }
+        // Don't share cache entries across credentialed and credential-less requests
+        // for what looks like the same URL after redaction — a token-bearing request
+        // can hit a private repo a token-less one can't, and vice versa. Bypass the
+        // cache entirely when the URL has userinfo.
+        val skipCache = InputValidation.hasUserInfo(url)
         val key = InputValidation.redactCredentials(url)
-        cache[key]?.takeIf { it.notExpired() }?.let { return it.result }
+        if (!skipCache) {
+            cache[key]?.takeIf { it.notExpired() }?.let { return it.result }
+        }
         val fresh = runCatching { runLsRemote(url) }
-        cache[key] = CacheEntry(fresh, System.currentTimeMillis())
+        // Only cache successes — caching a transient failure (DNS hiccup) makes the
+        // dialog show "host unreachable" for a full minute even after the network recovers.
+        if (!skipCache && fresh.isSuccess) {
+            cache[key] = CacheEntry(fresh, System.currentTimeMillis())
+        }
         return fresh
     }
 
