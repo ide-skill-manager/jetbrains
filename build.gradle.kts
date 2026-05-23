@@ -19,7 +19,7 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        intellijIdeaCommunity("2024.3")
+        intellijIdeaCommunity("2024.3.6")
         pluginVerifier()
         zipSigner()
         testFramework(TestFrameworkType.Platform)
