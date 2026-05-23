@@ -1,3 +1,4 @@
+import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
@@ -34,7 +35,7 @@ intellijPlatform {
         version = "0.1.0"
         ideaVersion {
             sinceBuild = "241"
-            untilBuild = provider { null }
+            untilBuild = "243.*"
         }
     }
     publishing {
@@ -46,8 +47,16 @@ intellijPlatform {
         password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
     }
     pluginVerification {
+        // Avoid `recommended()` — that resolves to the JetBrains-recommended set,
+        // which currently includes the unreleased 2025.3 and fails dependency resolution.
+        // Pin explicitly to the matrix CI actually runs against.
         ides {
-            recommended()
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.1")
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.2")
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.3")
+            ide(IntelliJPlatformType.PyCharmCommunity, "2024.3")
+            ide(IntelliJPlatformType.WebStorm, "2024.3")
+            ide(IntelliJPlatformType.Rider, "2024.3")
         }
     }
 }
