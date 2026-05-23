@@ -1,13 +1,16 @@
 package dev.agentry.jetbrains.ui.settings
 
+import com.intellij.ide.DataManager
+import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextField
+import dev.agentry.jetbrains.actions.AgentryTopics
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.settings.AgentrySettings
-import dev.agentry.jetbrains.util.InputValidation
+import dev.agentry.jetbrains.ui.dialogs.AddRegistryDialog
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.GridBagConstraints
@@ -17,7 +20,6 @@ import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JComboBox
-import javax.swing.JOptionPane
 import javax.swing.JPanel
 
 /**
@@ -35,8 +37,6 @@ class AgentrySettingsPanel {
             "${src.url} @ ${src.ref}${if (!src.enabled) "  (disabled)" else ""}"
         }
     }
-    private val urlField = JBTextField(40)
-    private val refField = JBTextField(12).apply { text = "HEAD" }
     private val defaultTargetCombo = JComboBox(InstallTarget.values())
     private val autoSyncCheck = JCheckBox(
         "Auto-sync .agentry/config.yaml on project open (only for trusted projects)"
@@ -61,9 +61,7 @@ class AgentrySettingsPanel {
         )
 
         val controls = JPanel(FlowLayout(FlowLayout.LEFT)).apply {
-            add(JBLabel("URL:")); add(urlField)
-            add(JBLabel("Ref:")); add(refField)
-            add(JButton("Add").also { it.addActionListener { onAdd() } })
+            add(JButton("+ Add Registry…").also { it.addActionListener { onAdd() } })
             add(JButton("Remove").also { it.addActionListener { onRemove() } })
             add(JButton("Toggle enabled").also { it.addActionListener { onToggleEnabled() } })
         }
@@ -86,34 +84,35 @@ class AgentrySettingsPanel {
         return panel
     }
 
+    /**
+     * Open [AddRegistryDialog] (same dialog the tool window's "+ Add Registry…" uses) so
+     * the user gets URL validation, the `git ls-remote`-driven branch dropdown, and the
+     * other affordances. Settings doesn't have a Project directly — we pull it from the
+     * panel's data context, falling back to the first open project.
+     */
     private fun onAdd() {
-        val url = urlField.text.trim()
-        val ref = refField.text.trim().ifBlank { "HEAD" }
-        if (!InputValidation.isValidRegistryUrl(url)) {
-            JOptionPane.showMessageDialog(
+        val project = DataManager.getInstance().getDataContext(root).getData(CommonDataKeys.PROJECT)
+            ?: ProjectManager.getInstance().openProjects.firstOrNull()
+        if (project == null) {
+            javax.swing.JOptionPane.showMessageDialog(
                 root,
-                "URL must use https, http, ssh, or git protocol (or scp-form `user@host:path`).",
-                "Invalid registry URL",
-                JOptionPane.WARNING_MESSAGE
+                "Open a project first — the registry-add dialog needs one to run validation.",
+                "Agentry",
+                javax.swing.JOptionPane.INFORMATION_MESSAGE
             )
             return
         }
-        if (ref != "HEAD" && !InputValidation.isValidGitRef(ref)) {
-            JOptionPane.showMessageDialog(
-                root,
-                "Ref must be a valid branch / tag / commit name (no spaces, no leading `-`).",
-                "Invalid git ref",
-                JOptionPane.WARNING_MESSAGE
-            )
-            return
-        }
+        val dialog = AddRegistryDialog(project)
+        if (!dialog.showAndGet()) return
+        val result = dialog.result ?: return
         registryModel.addElement(
             AgentrySettings.RegistrySourceState(
-                url = url, ref = ref, enabled = true, displayName = url
+                url = result.url,
+                ref = result.ref,
+                enabled = result.enabled,
+                displayName = result.name.ifBlank { result.url }
             )
         )
-        urlField.text = ""
-        refField.text = "HEAD"
     }
 
     private fun onRemove() {
@@ -142,6 +141,14 @@ class AgentrySettingsPanel {
             .toMutableList()
         settings.defaultInstallTarget = defaultTargetCombo.selectedItem as InstallTarget
         settings.autoSyncOnOpen = autoSyncCheck.isSelected
+        // Tell every open project's tool window that the registry list changed so it
+        // re-fetches and re-renders. Without this, the user's "Apply" doesn't visibly
+        // do anything until they hit Refresh in the tool window.
+        ProjectManager.getInstance().openProjects.forEach { project ->
+            if (!project.isDisposed) {
+                project.messageBus.syncPublisher(AgentryTopics.SKILLS_CHANGED).skillsChanged()
+            }
+        }
     }
 
     fun isModified(settings: AgentrySettings): Boolean {
