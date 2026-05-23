@@ -6,3 +6,9 @@ build/
 out/
 .DS_Store
 .intellijPlatform/
+
+# Kotlin compiler artefacts
+.kotlin/
+
+# BasePlatformTestCase scratch (created when tests run on filesystems that allow `:`)
+temp:/

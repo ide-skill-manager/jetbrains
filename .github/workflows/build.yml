@@ -33,5 +33,17 @@ jobs:
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v4
         with:
-          name: agentry-plugin
+          name: agentry-plugin-${{ github.sha }}
           path: build/distributions/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.sha }}
+          path: |
+            build/reports/tests/test/
+            build/test-results/test/
+          retention-days: 7

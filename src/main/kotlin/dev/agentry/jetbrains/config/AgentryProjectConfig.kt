@@ -6,12 +6,12 @@ import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.intellij.openapi.diagnostic.logger
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.RegistrySource
+import dev.agentry.jetbrains.util.InputValidation
 import java.io.File
 
 /**
- * Parses and writes the project-level .agentry/config.yaml file.
- * This is the "package.json for agent skills" — committed to the repo so
- * teammates get the same agent setup with one click.
+ * Project-level `.agentry/config.yaml`: the "package.json for agent skills" that lets a
+ * team share registry sources and skill dependencies via the repo.
  */
 data class AgentryProjectConfig(
     val version: String = "1",
@@ -33,37 +33,40 @@ data class AgentryProjectConfig(
         val target: String = InstallTarget.CLAUDE_PROJECT.name
     )
 
-    fun toRegistrySources(): List<RegistrySource> = sources.map {
-        RegistrySource(url = it.url, ref = it.ref, displayName = it.name.ifBlank { it.url })
+    /** Convert YAML sources to runtime [RegistrySource]s, dropping any that fail validation. */
+    fun toRegistrySources(): List<RegistrySource> = sources.mapNotNull { src ->
+        if (!InputValidation.isValidRegistryUrl(src.url)) {
+            log.warn("Skipping registry with invalid URL in .agentry/config.yaml: '${src.url}'")
+            return@mapNotNull null
+        }
+        if (src.ref != "HEAD" && !InputValidation.isValidGitRef(src.ref)) {
+            log.warn("Skipping registry '${src.url}' with invalid ref: '${src.ref}'")
+            return@mapNotNull null
+        }
+        RegistrySource(url = src.url, ref = src.ref, displayName = src.name.ifBlank { src.url })
     }
 
     companion object {
         private val log = logger<AgentryProjectConfig>()
         private val mapper = ObjectMapper(YAMLFactory()).registerKotlinModule()
 
-        const val CONFIG_FILE = ".agentry/config.yaml"
+        const val CONFIG_PATH = ".agentry/config.yaml"
+
+        fun configFile(projectBasePath: String): File =
+            File(projectBasePath, CONFIG_PATH)
 
         fun loadFrom(projectBasePath: String): AgentryProjectConfig? {
-            val file = File("$projectBasePath/$CONFIG_FILE")
+            val file = configFile(projectBasePath)
             if (!file.exists()) return null
-            return runCatching {
-                mapper.readValue(file, AgentryProjectConfig::class.java)
-            }.onFailure { e ->
-                log.warn("Failed to parse $CONFIG_FILE: ${e.message}")
-            }.getOrNull()
+            return runCatching { mapper.readValue(file, AgentryProjectConfig::class.java) }
+                .onFailure { log.warn("Failed to parse $CONFIG_PATH: ${it.message}") }
+                .getOrNull()
         }
 
         fun saveTo(config: AgentryProjectConfig, projectBasePath: String) {
-            val file = File("$projectBasePath/$CONFIG_FILE")
+            val file = configFile(projectBasePath)
             file.parentFile.mkdirs()
             mapper.writeValue(file, config)
-        }
-
-        /** Create a default config file if none exists. */
-        fun createDefault(projectBasePath: String): AgentryProjectConfig {
-            val config = AgentryProjectConfig()
-            saveTo(config, projectBasePath)
-            return config
         }
     }
 }

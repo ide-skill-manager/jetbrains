@@ -4,10 +4,12 @@ import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import dev.agentry.jetbrains.model.SkillManifest
+import dev.agentry.jetbrains.util.InputValidation
 import java.io.File
 
 /**
- * Parses VS Code marketplace-style package.json / skill manifest files.
+ * Parses skill manifest JSON files. Accepts the VS Code Marketplace shape but only
+ * extracts the fields we actually use.
  */
 class ManifestParser {
 
@@ -15,60 +17,35 @@ class ManifestParser {
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
         .registerKotlinModule()
 
-    /**
-     * Parse a single manifest file (package.json or skill.json).
-     * Returns null if the file cannot be parsed or doesn't look like a skill manifest.
-     */
-    fun parseFile(file: File, sourceRegistry: String = ""): SkillManifest? {
-        return runCatching {
-            val raw = mapper.readTree(file)
-            SkillManifest(
-                name = raw.path("name").asText(""),
-                version = raw.path("version").asText("0.0.1"),
-                displayName = raw.path("displayName").asText(raw.path("name").asText("")),
-                description = raw.path("description").asText(""),
-                publisher = raw.path("publisher").asText(""),
-                categories = raw.path("categories").map { it.asText() },
-                tags = raw.path("keywords").map { it.asText() },
-                repository = raw.path("repository").path("url").asText().takeIf { it.isNotBlank() }
-                    ?: raw.path("repository").asText("").takeIf { it.isNotBlank() },
-                license = raw.path("license").asText("").takeIf { it.isNotBlank() },
-                files = raw.path("files").map { it.asText() },
-                engines = raw.path("engines").fields().asSequence()
-                    .associate { (k, v) -> k to v.asText() },
-                sourceRegistry = sourceRegistry
-            ).takeIf { it.name.isNotBlank() }
-        }.getOrNull()
-    }
+    /** Parse a single manifest. Returns null if it can't be read or has no usable name. */
+    fun parseFile(file: File, sourceRegistry: String = ""): SkillManifest? = runCatching {
+        val raw = mapper.readTree(file)
+        val name = raw.path("name").asText("")
+        if (!InputValidation.isValidSkillName(name)) return@runCatching null
+        SkillManifest(
+            name = name,
+            version = raw.path("version").asText("0.0.1"),
+            displayName = raw.path("displayName").asText(name),
+            description = raw.path("description").asText(""),
+            sourceRegistry = sourceRegistry
+        )
+    }.getOrNull()
 
-    /**
-     * Scan a directory for manifest files. Looks for package.json or skill.json
-     * at depth 1 (each immediate subdirectory is a skill).
-     */
+    /** Find manifests in [dir] itself and each immediate subdirectory. */
     fun scanDirectory(dir: File, sourceRegistry: String = ""): List<SkillManifest> {
         if (!dir.isDirectory) return emptyList()
-        val results = mutableListOf<SkillManifest>()
-
-        // Check the directory itself first
-        val rootManifest = findManifestIn(dir)
-        if (rootManifest != null) {
-            parseFile(rootManifest, sourceRegistry)?.let { results.add(it) }
+        val candidates = listOf(dir) + (dir.listFiles()?.filter { it.isDirectory }.orEmpty())
+        return candidates.mapNotNull { c ->
+            findManifestIn(c)?.let { parseFile(it, sourceRegistry) }
         }
-
-        // Check immediate subdirectories
-        dir.listFiles()?.filter { it.isDirectory }?.forEach { subDir ->
-            val manifest = findManifestIn(subDir)
-            if (manifest != null) {
-                parseFile(manifest, sourceRegistry)?.let { results.add(it) }
-            }
-        }
-
-        return results
     }
 
-    private fun findManifestIn(dir: File): File? {
-        return listOf("skill.json", "package.json", "manifest.json")
+    private fun findManifestIn(dir: File): File? =
+        MANIFEST_FILENAMES.asSequence()
             .map { File(dir, it) }
-            .firstOrNull { it.exists() && it.isFile }
+            .firstOrNull { it.isFile }
+
+    companion object {
+        private val MANIFEST_FILENAMES = listOf("skill.json", "package.json", "manifest.json")
     }
 }

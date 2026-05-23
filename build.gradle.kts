@@ -53,7 +53,17 @@ intellijPlatform {
 }
 
 kotlin {
+    // Build with the modern toolchain but emit bytecode compatible with the oldest
+    // platform we support (since-build=241 ⇒ 2024.1 ⇒ JVM 17).
     jvmToolchain(21)
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
 tasks {

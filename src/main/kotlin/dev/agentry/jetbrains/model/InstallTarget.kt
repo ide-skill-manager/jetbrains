@@ -1,21 +1,40 @@
 package dev.agentry.jetbrains.model
 
-/**
- * Describes where a skill should be installed on disk.
- */
-enum class InstallTarget(val displayName: String, val description: String) {
-    CLAUDE_PROJECT(".claude/skills/ (project)", "Claude Code project-level skills"),
-    CLAUDE_USER("~/.claude/skills/ (user)", "Claude Code user-level skills"),
-    JUNIE_PROJECT(".junie/skills/ (project)", "Junie project-level skills"),
-    AGENTRY_CACHE("~/.agentry/ (cache)", "Neutral cache for all agents");
+import dev.agentry.jetbrains.util.AgentryPaths
+import dev.agentry.jetbrains.util.InputValidation
+import java.io.File
 
-    fun resolvePath(projectBasePath: String?, skillName: String): java.io.File {
-        val home = System.getProperty("user.home")
-        return when (this) {
-            CLAUDE_PROJECT -> java.io.File("$projectBasePath/.claude/skills/$skillName")
-            CLAUDE_USER -> java.io.File("$home/.claude/skills/$skillName")
-            JUNIE_PROJECT -> java.io.File("$projectBasePath/.junie/skills/$skillName")
-            AGENTRY_CACHE -> java.io.File("$home/.agentry/skills/$skillName")
+/**
+ * Where a skill is written on disk for a given coding agent.
+ */
+enum class InstallTarget(val displayName: String) {
+    CLAUDE_PROJECT(".claude/skills/ (project)"),
+    CLAUDE_USER("~/.claude/skills/ (user)"),
+    JUNIE_PROJECT(".junie/skills/ (project)"),
+    AGENTRY_CACHE("~/.agentry/skills/ (neutral)");
+
+    /** Root directory containing all skills installed at this target. */
+    fun baseDir(projectBasePath: String?): File? = when (this) {
+        CLAUDE_PROJECT -> projectBasePath?.let { File(it, ".claude/skills") }
+        CLAUDE_USER -> File(System.getProperty("user.home"), ".claude/skills")
+        JUNIE_PROJECT -> projectBasePath?.let { File(it, ".junie/skills") }
+        AGENTRY_CACHE -> AgentryPaths.agentrySkillsRoot
+    }
+
+    /**
+     * Resolve the install directory for [skillName]. Validates the name and verifies the
+     * resolved path stays inside [baseDir] — guards against `name = "../../etc/passwd"`.
+     */
+    fun resolvePath(projectBasePath: String?, skillName: String): File {
+        require(InputValidation.isValidSkillName(skillName)) {
+            "Invalid skill name: '$skillName'"
         }
+        val base = baseDir(projectBasePath)
+            ?: error("$name requires a project base path")
+        val dest = File(base, skillName)
+        require(InputValidation.isInsideDir(dest, base)) {
+            "Resolved path '${dest.absolutePath}' escapes install root '${base.absolutePath}'"
+        }
+        return dest
     }
 }

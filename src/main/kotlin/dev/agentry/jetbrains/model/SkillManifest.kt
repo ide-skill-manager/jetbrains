@@ -3,8 +3,8 @@ package dev.agentry.jetbrains.model
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 
 /**
- * Represents a skill/agent manifest parsed from the VS Code marketplace JSON schema.
- * A manifest describes a single skill (tool, prompt, or agent definition).
+ * Skill manifest parsed from a registry's `skill.json` / `package.json` / `manifest.json`.
+ * Only fields the plugin actively uses are modelled.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class SkillManifest(
@@ -12,31 +12,25 @@ data class SkillManifest(
     val version: String = "0.0.1",
     val displayName: String = "",
     val description: String = "",
-    val publisher: String = "",
-    val categories: List<String> = emptyList(),
-    val tags: List<String> = emptyList(),
-    val repository: String? = null,
-    val license: String? = null,
-    val files: List<String> = emptyList(),
-    val engines: Map<String, String> = emptyMap(),
-    /** Source registry this manifest came from */
-    val sourceRegistry: String = "",
-    /** Local path on disk after install */
-    val installedPath: String? = null
+    /** Registry this manifest was fetched from (the source URL). Empty when loaded locally. */
+    val sourceRegistry: String = ""
 )
 
-/** Installation status of a skill */
-enum class InstallStatus {
-    NOT_INSTALLED,
-    INSTALLED,
-    UPDATE_AVAILABLE,
-    INSTALLING,
-    ERROR
-}
+/** Installation status surfaced in the tool window. */
+enum class InstallStatus { NOT_INSTALLED, INSTALLED, ERROR }
 
-/** A skill with its current installation status */
+/** A manifest plus its current install status, used by the UI. */
 data class SkillEntry(
     val manifest: SkillManifest,
-    val status: InstallStatus = InstallStatus.NOT_INSTALLED,
-    val errorMessage: String? = null
+    val status: InstallStatus = InstallStatus.NOT_INSTALLED
+)
+
+/**
+ * A skill that has been written to disk. Decoupled from [SkillManifest] so the manifest
+ * stays pure metadata — no leaking of installation state into the domain type.
+ */
+data class InstalledSkill(
+    val manifest: SkillManifest,
+    val location: java.io.File,
+    val target: InstallTarget
 )
