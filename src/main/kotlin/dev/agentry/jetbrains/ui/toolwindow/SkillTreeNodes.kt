@@ -1,7 +1,10 @@
 package dev.agentry.jetbrains.ui.toolwindow
 
 import com.intellij.ui.CheckedTreeNode
+import dev.agentry.jetbrains.model.ComponentKind
 import dev.agentry.jetbrains.model.InstalledSkill
+import dev.agentry.jetbrains.model.PluginComponent
+import dev.agentry.jetbrains.model.PluginManifest
 import dev.agentry.jetbrains.model.RegistrySource
 import dev.agentry.jetbrains.model.SkillManifest
 import java.io.File
@@ -33,6 +36,41 @@ sealed class AgentryNode(userObject: Any?) : CheckedTreeNode(userObject) {
         var installed: Boolean
     ) : AgentryNode(manifest) {
         val name: String get() = manifest.name
+    }
+
+    /**
+     * A marketplace plugin — one of N inside a [Registry] that ships a `marketplace.json`,
+     * or the sole plugin inside a registry whose root carries a `plugin.json`. Children
+     * are grouped by [ComponentKind] under [ComponentGroup] headers.
+     */
+    class Plugin(
+        val manifest: PluginManifest,
+        val componentCount: Int
+    ) : AgentryNode(manifest) {
+        /** `displayName (vX.Y.Z)` — fallback to the plugin name when no displayName is set. */
+        val label: String get() = buildString {
+            append(manifest.displayName ?: manifest.name)
+            manifest.version?.let { append(" v$it") }
+        }
+    }
+
+    /**
+     * Header row grouping a plugin's components by [kind]. The count is the number of
+     * children rendered inside this group (e.g. "3 skills", "1 hook").
+     */
+    class ComponentGroup(val kind: ComponentKind, val count: Int) :
+        AgentryNode(kind)
+
+    /**
+     * Individual component leaf: a skill / command / agent / hook / mcp inside a plugin.
+     * Checkable so the user can include/exclude it from a batch install.
+     */
+    class Component(
+        val component: PluginComponent,
+        val kind: ComponentKind,
+        var installed: Boolean
+    ) : AgentryNode(component) {
+        val name: String get() = component.name
     }
 
     class OrphanGroup(val count: Int) : AgentryNode("Installed (no registered registry)")

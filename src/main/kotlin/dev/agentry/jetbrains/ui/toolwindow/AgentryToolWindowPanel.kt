@@ -56,19 +56,27 @@ class AgentryToolWindowPanel(private val project: Project) {
         refreshButton.addActionListener { reloadEntries() }
         addButton.addActionListener { fireAction("Agentry.AddRegistry", emptyList()) }
         installButton.addActionListener {
-            val picks = skillTree.selectedSkills().filter { !it.installed }.map { it.name }
-            if (picks.isEmpty()) {
-                statusLabel.text = "No not-installed skills selected."; return@addActionListener
+            // Two pipelines: legacy flat-skill installs (SkillManifest-based) and the
+            // newer plugin-component installs (PluginComponent-based via PluginInstaller).
+            // Fire whichever applies to the current selection; if both are present, run
+            // both.
+            val legacySkills = skillTree.selectedSkills().filter { !it.installed }.map { it.name }
+            val components = skillTree.selectedComponents().filter { !it.installed }
+            if (legacySkills.isEmpty() && components.isEmpty()) {
+                statusLabel.text = "Nothing to install — select a skill or component."; return@addActionListener
             }
-            fireAction("Agentry.InstallSelected", picks)
+            if (legacySkills.isNotEmpty()) fireAction("Agentry.InstallSelected", legacySkills)
+            if (components.isNotEmpty()) fireComponentAction("Agentry.InstallComponents", components)
         }
         uninstallButton.addActionListener {
-            val picks = (skillTree.selectedSkills().filter { it.installed }.map { it.name } +
-                skillTree.selectedOrphans().map { it.name })
-            if (picks.isEmpty()) {
-                statusLabel.text = "No installed skills selected."; return@addActionListener
+            val legacy = skillTree.selectedSkills().filter { it.installed }.map { it.name } +
+                skillTree.selectedOrphans().map { it.name }
+            val components = skillTree.selectedComponents().filter { it.installed }
+            if (legacy.isEmpty() && components.isEmpty()) {
+                statusLabel.text = "Nothing to remove — select an installed skill or component."; return@addActionListener
             }
-            fireAction("Agentry.UninstallSelected", picks)
+            if (legacy.isNotEmpty()) fireAction("Agentry.UninstallSelected", legacy)
+            if (components.isNotEmpty()) fireComponentAction("Agentry.UninstallComponents", components)
         }
 
         searchField.addDocumentListener(object : DocumentListener {
@@ -207,8 +215,10 @@ class AgentryToolWindowPanel(private val project: Project) {
     private fun updateActionButtonState() {
         val checkedSkills = skillTree.selectedSkills()
         val checkedOrphans = skillTree.selectedOrphans()
-        val toInstall = checkedSkills.count { !it.installed }
-        val toUninstall = checkedSkills.count { it.installed } + checkedOrphans.size
+        val checkedComponents = skillTree.selectedComponents()
+        val toInstall = checkedSkills.count { !it.installed } + checkedComponents.count { !it.installed }
+        val toUninstall = checkedSkills.count { it.installed } + checkedOrphans.size +
+            checkedComponents.count { it.installed }
         installButton.text = if (toInstall > 0) "Install selected ($toInstall)" else "Install selected"
         uninstallButton.text = if (toUninstall > 0) "Uninstall selected ($toUninstall)" else "Uninstall selected"
         installButton.isEnabled = toInstall > 0
@@ -231,6 +241,26 @@ class AgentryToolWindowPanel(private val project: Project) {
         val dataContext = DataContext { dataId ->
             when (dataId) {
                 SELECTED_SKILLS_DATA_KEY -> skillNames
+                CommonDataKeys.PROJECT.name -> project
+                else -> null
+            }
+        }
+        val event = AnActionEvent.createFromDataContext("AgentryToolWindow", Presentation(), dataContext)
+        action.actionPerformed(event)
+    }
+
+    /**
+     * Fire a plugin-component action. Data key carries the actual `AgentryNode.Component`
+     * list so the action has the full [PluginComponent] + plugin manifest context it
+     * needs to dispatch through `PluginInstaller`.
+     */
+    private fun fireComponentAction(actionId: String, components: List<AgentryNode.Component>) {
+        val action = ActionManager.getInstance().getAction(actionId) ?: run {
+            statusLabel.text = "Action '$actionId' not registered"; return
+        }
+        val dataContext = DataContext { dataId ->
+            when (dataId) {
+                dev.agentry.jetbrains.actions.SELECTED_COMPONENTS_DATA_KEY -> components
                 CommonDataKeys.PROJECT.name -> project
                 else -> null
             }

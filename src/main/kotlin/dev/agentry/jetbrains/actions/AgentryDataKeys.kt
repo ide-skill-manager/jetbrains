@@ -24,6 +24,13 @@ const val SKILL_NAME_DATA_KEY: String = "AgentrySkillName"
  */
 const val SELECTED_SKILLS_DATA_KEY: String = "AgentrySelectedSkills"
 
+/**
+ * A `List<AgentryNode.Component>` of plugin components the user has selected. Read by
+ * `InstallComponentsAction` / `UninstallComponentsAction` so the plugin-install pipeline
+ * has the [PluginComponent] + parent plugin manifest in hand.
+ */
+const val SELECTED_COMPONENTS_DATA_KEY: String = "AgentrySelectedComponents"
+
 fun interface SkillsChangedListener {
     fun skillsChanged()
 }

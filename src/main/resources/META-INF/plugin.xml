@@ -83,6 +83,14 @@
                     class="dev.agentry.jetbrains.actions.UninstallSelectedAction"
                     text="Uninstall Checked Skills"
                     description="Uninstall all skills checked in the Agentry tool window"/>
+            <action id="Agentry.InstallComponents"
+                    class="dev.agentry.jetbrains.actions.InstallComponentsAction"
+                    text="Install Checked Components"
+                    description="Install all plugin components checked in the Agentry tool window"/>
+            <action id="Agentry.UninstallComponents"
+                    class="dev.agentry.jetbrains.actions.UninstallComponentsAction"
+                    text="Uninstall Checked Components"
+                    description="Uninstall all plugin components checked in the Agentry tool window"/>
         </group>
     </actions>
 </idea-plugin>
