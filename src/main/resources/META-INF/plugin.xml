@@ -1,0 +1,53 @@
+<idea-plugin>
+    <id>dev.agentry.jetbrains</id>
+    <name>Agentry</name>
+    <vendor url="https://github.com/ide-skill-manager">ide-skill-manager</vendor>
+    <description><![CDATA[
+        Browse, install, and manage agent skills/manifests from git repositories.
+        Supports Claude Code, Junie, GitHub Copilot, and other coding agents.
+        <br/>
+        <ul>
+          <li>Browse skills from git-hosted registries</li>
+          <li>Install skills to .claude/, .junie/, or ~/.agentry/</li>
+          <li>Project-level .agentry/config.yaml for team skill sharing</li>
+          <li>Auto-sync on project open</li>
+        </ul>
+    ]]></description>
+    <change-notes><![CDATA[
+        <b>0.1.0</b>
+        <ul>
+          <li>Initial release: manifest resolver, install layer, tool window, settings</li>
+        </ul>
+    ]]></change-notes>
+
+    <idea-version since-build="241"/>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Settings -->
+        <applicationConfigurable
+            parentId="tools"
+            instance="dev.agentry.jetbrains.ui.settings.AgentrySettingsConfigurable"
+            id="dev.agentry.jetbrains.settings"
+            displayName="Agentry"/>
+        <applicationService
+            serviceImplementation="dev.agentry.jetbrains.settings.AgentrySettings"/>
+
+        <!-- Tool Window -->
+        <toolWindow
+            id="Agentry"
+            anchor="right"
+            factoryClass="dev.agentry.jetbrains.ui.toolwindow.AgentryToolWindowFactory"
+            icon="/icons/agentry.svg"/>
+
+        <!-- Notification Group -->
+        <notificationGroup id="Agentry" displayType="BALLOON" isLogByDefault="true"/>
+    </extensions>
+
+    <projectListeners>
+        <listener
+            class="dev.agentry.jetbrains.AgentryStartup"
+            topic="com.intellij.openapi.project.ProjectManagerListener"/>
+    </projectListeners>
+</idea-plugin>
