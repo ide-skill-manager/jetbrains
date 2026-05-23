@@ -103,11 +103,13 @@ class AgentryStarter : ApplicationStarter {
 
     private fun parseTarget(args: List<String>): InstallTarget {
         val idx = args.indexOf("--target")
-        if (idx >= 0 && idx + 1 < args.size) {
-            return enumValues<InstallTarget>().firstOrNull { it.name == args[idx + 1] }
-                ?: error("Unknown --target: ${args[idx + 1]}")
-        }
-        return AgentrySettings.getInstance().defaultInstallTarget
+        if (idx < 0) return AgentrySettings.getInstance().defaultInstallTarget
+        // `--target` is present — require a value. Silently defaulting hides typos and
+        // can install to an unintended location.
+        val value = args.getOrNull(idx + 1)
+            ?: error("--target requires a value (one of: ${enumValues<InstallTarget>().joinToString { it.name }})")
+        return enumValues<InstallTarget>().firstOrNull { it.name == value }
+            ?: error("Unknown --target: $value")
     }
 
     /** Project-scoped targets aren't meaningful in CLI mode unless a project path is set later. */

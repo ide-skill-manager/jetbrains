@@ -40,9 +40,13 @@ class ProjectSyncService(private val project: Project) {
         //      a dep referencing one would silently never match — clearer to leave them
         //      out of the map so the explicit "unknown registry" path fires instead.
         val redactedByName = sources.associate { src ->
+            val safeUrl = InputValidation.redactCredentials(src.url)
+            // Fall back to the redacted URL (never raw) so even a no-name source can't leak
+            // userinfo through the picked-display log path further down.
             val name = config.sources.firstOrNull { it.url == src.url && it.ref == src.ref }?.name
-                ?: src.url
-            name to InputValidation.redactCredentials(src.url)
+                ?.takeIf { it.isNotBlank() }
+                ?: safeUrl
+            name to safeUrl
         }
         val settings = AgentrySettings.getInstance()
         val registry = RegistryManager.getInstance()
