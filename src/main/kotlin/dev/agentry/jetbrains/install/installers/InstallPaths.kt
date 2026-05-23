@@ -47,10 +47,16 @@ internal object InstallPaths {
      * Custom Chat Agents — `<project>/.github/agents/<name>.agent.md` (Project) or
      * `~/.copilot/agents/<name>.agent.md` (Global).
      *
-     * Source: [GitHub Docs — Creating custom agents](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/create-custom-agents-in-your-ide).
-     * The Copilot for JetBrains plugin auto-discovers `.agent.md` files at the project
-     * path — no manual registration. The global path is documented for VS Code; we use
-     * the same convention for JetBrains and call out the empirical gap in the spec.
+     * Both paths are documented by the Copilot for JetBrains team:
+     * [Agent Configuration and Extensibility wiki](https://github.com/microsoft/copilot-intellij-feedback/wiki/Agent-Configuration-and-Extensibility)
+     * lists `$PROJECT_ROOT/.github/agents/**/*.agent.md` (Local Agent Harness, project)
+     * and `$HOME/.copilot/agents/**/*.agent.md` (Local Agent Harness, user) as the
+     * canonical discovery globs. Files are auto-discovered; no manual registration.
+     *
+     * (The wiki also lists `$PROJECT_ROOT/.claude/agents/**/*.agent.md` as a project
+     * pickup path — Copilot for JetBrains reads both `.github/` and `.claude/` agents
+     * dirs. Worth a future enhancement: dual-write so a single Agentry install reaches
+     * Claude Code too. Tracked as a follow-up.)
      */
     fun agentFile(agentName: String, scope: InstallScope): File = when (scope) {
         is InstallScope.Project -> File(scope.projectDir, ".github/agents/$agentName.agent.md")

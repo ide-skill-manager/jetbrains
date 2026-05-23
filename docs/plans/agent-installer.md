@@ -9,7 +9,7 @@ Source: [GitHub Docs — Creating custom agents for Copilot cloud agent in your 
 | Question | Answer |
 |---|---|
 | Project-scope path | `<project>/.github/agents/<name>.agent.md` — auto-discovered, no manual registration |
-| Global-scope path | `~/.copilot/agents/<name>.agent.md` — documented for VS Code, **not** explicitly confirmed for IntelliJ. Implement as best-effort for v1, document the gap. |
+| Global-scope path | `~/.copilot/agents/<name>.agent.md` — documented by the Copilot for JetBrains [Agent Configuration and Extensibility wiki](https://github.com/microsoft/copilot-intellij-feedback/wiki/Agent-Configuration-and-Extensibility) as `$HOME/.copilot/agents/**/*.agent.md` under "Local Agent Harness, user-level". |
 | Filename | `<name>.agent.md` is canonical. `.chatmode.md` is legacy-renamed-to; `.md` still accepted. Always write `.agent.md`. |
 | Frontmatter required | `description` (shown in the Copilot Chat dropdown). |
 | Frontmatter optional we pass through | `name`, `model`, `tools`, `target`, `argument-hint` |
@@ -60,8 +60,17 @@ Source: [GitHub Docs — Creating custom agents for Copilot cloud agent in your 
 - **Always write `.agent.md`** — never `.md` or `.chatmode.md`. The loader accepts the canonical form on every IDE.
 - **Description fallback policy.** Source has it → keep. Missing → use the first non-empty paragraph from the body, trimmed to 120 chars. Body empty → use `"Custom agent: $name"`. The loader rejects files with no description; missing it would break the install in the user's face.
 
-## Open questions (defer)
+## Follow-ups (not blocking this PR)
 
-- `~/.copilot/agents/<name>.agent.md` global path on JetBrains specifically — pick up VS Code's convention for now, verify with a sandbox test.
-- The Customizations panel's `Path` column UX — does it show a directory or a file? Best guess from the research is per-file. Doesn't affect install logic; affects how *Agentry's* UI renders agent install state (a future polish iteration).
-- Whether the `target: github-copilot` frontmatter is honoured by the JetBrains loader specifically. Doesn't block us — we don't currently set it.
+- **Dual-write to `.claude/agents/`** — the Copilot for JetBrains wiki lists
+  `$PROJECT_ROOT/.claude/agents/**/*.agent.md` as a valid pickup path alongside
+  `.github/agents/`. Adding a second write site lets one Agentry install reach both
+  Copilot for JetBrains and Claude Code from a single source. Same shape as the
+  cross-tool dual-write we should add for skills (`.github/skills/` + `.claude/skills/`).
+- **Hook filename pattern fix** — the wiki documents hooks as `*.hooks.json` (flat,
+  plural extension) at `.github/hooks/`. Our `HookInstaller` writes
+  `.github/hooks/<plugin>/hooks.json` (directory per plugin). Real bug — the current
+  file isn't recognised by the JetBrains loader.
+- **Customizations panel "Path" column UX** — does it show a directory or a file?
+  Best guess per-file. Doesn't affect install logic.
+- **`target: github-copilot` frontmatter** — recognised by the loader spec; we don't set it.
