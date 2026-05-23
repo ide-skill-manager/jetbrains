@@ -49,4 +49,22 @@ internal object InstallPaths {
      */
     fun pluginDataDir(pluginId: String): File =
         File(userHome, ".agentry/plugin-data/$pluginId")
+
+    /**
+     * Centralised destination resolver. Single source of truth for "where does component
+     * X for plugin Y land at scope Z". Used by [dev.agentry.jetbrains.install.PluginInstaller]
+     * for install, [dev.agentry.jetbrains.actions.ComponentActions] for uninstall, and
+     * [dev.agentry.jetbrains.install.PluginInstallState] for install-state detection.
+     */
+    fun destFor(
+        component: dev.agentry.jetbrains.model.PluginComponent,
+        plugin: dev.agentry.jetbrains.model.PluginManifest,
+        scope: InstallScope
+    ): File = when (component) {
+        is dev.agentry.jetbrains.model.PluginComponent.Skill -> skillDir(component.name, scope)
+        is dev.agentry.jetbrains.model.PluginComponent.Command -> promptFile(component.name, scope)
+        is dev.agentry.jetbrains.model.PluginComponent.Agent -> skillDir("agent-${component.name}", scope)
+        is dev.agentry.jetbrains.model.PluginComponent.Hook -> hookDir(plugin.name, scope)
+        is dev.agentry.jetbrains.model.PluginComponent.McpServer -> mcpDir(plugin.name, scope)
+    }
 }

@@ -9,9 +9,7 @@ import dev.agentry.jetbrains.model.ManifestDialect
 import dev.agentry.jetbrains.model.PluginComponent
 import dev.agentry.jetbrains.model.PluginEntry
 import dev.agentry.jetbrains.model.PluginManifest
-import dev.agentry.jetbrains.model.PluginSource
 import dev.agentry.jetbrains.model.RegistrySource
-import dev.agentry.jetbrains.model.SkillManifest
 import dev.agentry.jetbrains.registry.MarketplaceParser
 import dev.agentry.jetbrains.registry.PluginManifestParser
 import dev.agentry.jetbrains.registry.PluginScanner
@@ -75,22 +73,17 @@ object SkillTreeBuilder {
         // 1. Marketplace catalog?
         val marketplace = marketplaceParser.parse(cloneDir)
         if (marketplace != null) {
-            return when (val result = marketplace) {
-                else -> {
-                    val parsed = result.getOrNull()
-                    if (parsed == null) {
-                        log.warn("marketplace.json parse failed for ${source.url}: ${result.exceptionOrNull()?.message}")
-                        registryWithStatus(source, RegistryStatus.UNREACHABLE, 0)
-                    } else {
-                        val node = registryWithStatus(source, RegistryStatus.OK, parsed.plugins.size)
-                        parsed.plugins.forEach { entry ->
-                            buildPluginNodeFromEntry(entry, cloneDir, parsed.metadata?.pluginRoot, projectBasePath)
-                                ?.let { node.add(it) }
-                        }
-                        node
-                    }
-                }
+            val parsed = marketplace.getOrNull()
+            if (parsed == null) {
+                log.warn("marketplace.json parse failed for ${source.url}: ${marketplace.exceptionOrNull()?.message}")
+                return registryWithStatus(source, RegistryStatus.UNREACHABLE, 0)
             }
+            val node = registryWithStatus(source, RegistryStatus.OK, parsed.plugins.size)
+            parsed.plugins.forEach { entry ->
+                buildPluginNodeFromEntry(entry, cloneDir, parsed.metadata?.pluginRoot, projectBasePath)
+                    ?.let { node.add(it) }
+            }
+            return node
         }
 
         // 2. Single plugin at the registry root?
@@ -161,7 +154,7 @@ object SkillTreeBuilder {
         projectBasePath: String?
     ): List<AgentryNode.ComponentGroup> {
         val byKind: Map<ComponentKind, List<PluginComponent>> = components
-            .groupBy { kindOf(it) }
+            .groupBy { it.kind }
             .toSortedMap(compareBy { it.ordinal })
         return byKind.map { (kind, items) ->
             val group = AgentryNode.ComponentGroup(kind, items.size)
@@ -171,14 +164,6 @@ object SkillTreeBuilder {
             }
             group
         }
-    }
-
-    private fun kindOf(c: PluginComponent): ComponentKind = when (c) {
-        is PluginComponent.Skill -> ComponentKind.SKILL
-        is PluginComponent.Command -> ComponentKind.COMMAND
-        is PluginComponent.Agent -> ComponentKind.AGENT
-        is PluginComponent.Hook -> ComponentKind.HOOK
-        is PluginComponent.McpServer -> ComponentKind.MCP_SERVER
     }
 
     /**
@@ -205,6 +190,4 @@ object SkillTreeBuilder {
         root.add(group)
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun unused(skill: SkillManifest, source: PluginSource): Nothing = error("not called")
 }

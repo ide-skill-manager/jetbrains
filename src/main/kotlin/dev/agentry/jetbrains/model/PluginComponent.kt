@@ -12,6 +12,8 @@ sealed class PluginComponent {
     abstract val name: String
     /** Every file that must be copied for this component to function on disk. */
     abstract val files: List<File>
+    /** Which sealed subtype this is — lets dispatchers avoid `when (component) is …`. */
+    abstract val kind: ComponentKind
 
     /** A `SKILL.md`-shaped folder under `skills/<name>/` (or a root `SKILL.md` plugin). */
     data class Skill(
@@ -21,6 +23,7 @@ sealed class PluginComponent {
         val supportFiles: List<File>
     ) : PluginComponent() {
         override val files: List<File> get() = listOf(skillFile) + supportFiles
+        override val kind: ComponentKind get() = ComponentKind.SKILL
     }
 
     /** A slash command — a single `.md` under `commands/`. */
@@ -33,6 +36,7 @@ sealed class PluginComponent {
         val argumentHint: String?
     ) : PluginComponent() {
         override val files: List<File> get() = listOf(sourceFile)
+        override val kind: ComponentKind get() = ComponentKind.COMMAND
     }
 
     /** A custom subagent — `.agent.md` (preferred) or `.md` under `agents/`. */
@@ -42,6 +46,7 @@ sealed class PluginComponent {
         val description: String?
     ) : PluginComponent() {
         override val files: List<File> get() = listOf(sourceFile)
+        override val kind: ComponentKind get() = ComponentKind.AGENT
     }
 
     /**
@@ -54,6 +59,7 @@ sealed class PluginComponent {
         val scripts: List<File>
     ) : PluginComponent() {
         override val files: List<File> get() = listOf(configFile) + scripts
+        override val kind: ComponentKind get() = ComponentKind.HOOK
     }
 
     /**
@@ -66,6 +72,7 @@ sealed class PluginComponent {
         val bundledFiles: List<File>
     ) : PluginComponent() {
         override val files: List<File> get() = listOf(configFile) + bundledFiles
+        override val kind: ComponentKind get() = ComponentKind.MCP_SERVER
     }
 }
 

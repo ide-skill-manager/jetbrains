@@ -64,7 +64,7 @@ class PluginSourceResolver internal constructor() {
     private fun resolveLocal(source: PluginSource.Local, registryRoot: File, pluginRoot: String?): File {
         val base = if (!pluginRoot.isNullOrBlank()) {
             val resolved = File(registryRoot, pluginRoot)
-            if (!resolved.canonicalPath.startsWith(registryRoot.canonicalPath)) {
+            if (!InputValidation.isInsideDir(resolved, registryRoot)) {
                 throw SecurityException("marketplace.metadata.pluginRoot escapes the registry root: $pluginRoot")
             }
             resolved
@@ -72,7 +72,7 @@ class PluginSourceResolver internal constructor() {
             registryRoot
         }
         val resolved = File(base, source.relativePath)
-        if (!resolved.canonicalPath.startsWith(registryRoot.canonicalPath)) {
+        if (!InputValidation.isInsideDir(resolved, registryRoot)) {
             throw SecurityException("plugin source path escapes the registry: ${source.relativePath}")
         }
         if (!resolved.isDirectory) {

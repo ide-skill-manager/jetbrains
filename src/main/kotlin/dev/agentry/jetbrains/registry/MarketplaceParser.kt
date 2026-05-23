@@ -53,6 +53,11 @@ class MarketplaceParser {
 
     /** Visible-for-testing parse-from-disk entry point. */
     internal fun parseFile(file: File): MarketplaceManifest {
+        if (file.length() > MAX_JSON_BYTES) {
+            throw IllegalArgumentException(
+                "marketplace.json exceeds $MAX_JSON_BYTES bytes (got ${file.length()})"
+            )
+        }
         val root = mapper.readTree(file)
         val name = root.path("name").asText("").ifBlank {
             throw IllegalArgumentException("marketplace.json missing required `name`")
@@ -114,13 +119,21 @@ class MarketplaceParser {
         if (node.isTextual) return PluginSource.Local(node.asText())
         if (node.isObject) {
             return when (val kind = node.path("source").asText("")) {
-                "github" -> PluginSource.Github(
-                    repo = node.path("repo").asText("").ifBlank {
+                "github" -> {
+                    val repo = node.path("repo").asText("").ifBlank {
                         throw IllegalArgumentException("plugins[$pluginName].source.repo is required for github sources")
-                    },
-                    ref = node.path("ref").asTextOrNull(),
-                    sha = node.path("sha").asTextOrNull()
-                )
+                    }
+                    if (!dev.agentry.jetbrains.util.InputValidation.isValidGithubRepo(repo)) {
+                        throw IllegalArgumentException(
+                            "plugins[$pluginName].source.repo must match owner/name (alphanumerics, dots, hyphens, underscores)"
+                        )
+                    }
+                    PluginSource.Github(
+                        repo = repo,
+                        ref = node.path("ref").asTextOrNull(),
+                        sha = node.path("sha").asTextOrNull()
+                    )
+                }
                 "url" -> PluginSource.Url(
                     url = node.path("url").asText("").ifBlank {
                         throw IllegalArgumentException("plugins[$pluginName].source.url is required for url sources")
@@ -140,5 +153,7 @@ class MarketplaceParser {
     companion object {
         const val GITHUB_PATH = ".github/plugin/marketplace.json"
         const val CLAUDE_PATH = ".claude-plugin/marketplace.json"
+        /** Hard cap on a marketplace.json's size — a 2 MiB catalog is already huge. */
+        private const val MAX_JSON_BYTES = 2L * 1024 * 1024
     }
 }

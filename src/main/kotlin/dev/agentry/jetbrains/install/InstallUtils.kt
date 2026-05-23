@@ -59,16 +59,3 @@ private fun copyFile(source: File, dest: File) {
     )
 }
 
-/**
- * Convenience: expand `${CLAUDE_PLUGIN_*}` variables for the JetBrains-Copilot install
- * flow. Delegates to [VariableExpansion]; see that file for the policy table.
- */
-internal fun expandPluginVariables(
-    text: String,
-    pluginRoot: File,
-    pluginDataDir: File,
-    @Suppress("UNUSED_PARAMETER") projectDir: File?
-): String = VariableExpansion.expand(
-    text,
-    ExpansionEnv.forJetBrainsInstall(pluginRoot, pluginDataDir)
-)

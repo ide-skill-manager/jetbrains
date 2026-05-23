@@ -52,6 +52,11 @@ class PluginManifestParser {
     }
 
     internal fun parseFile(file: File, pluginRoot: File, dialect: ManifestDialect): PluginManifest {
+        if (file.length() > MAX_JSON_BYTES) {
+            throw IllegalArgumentException(
+                "${file.relativeTo(pluginRoot)} exceeds $MAX_JSON_BYTES bytes"
+            )
+        }
         val root = mapper.readTree(file)
         val name = root.path("name").asText("").ifBlank {
             throw IllegalArgumentException("${file.relativeTo(pluginRoot)} missing required `name`")
@@ -119,5 +124,7 @@ class PluginManifestParser {
     companion object {
         const val GITHUB_PATH = ".github/plugin.json"
         const val CLAUDE_PATH = ".claude-plugin/plugin.json"
+        /** Hard cap on a single plugin.json's size. */
+        private const val MAX_JSON_BYTES = 512L * 1024
     }
 }

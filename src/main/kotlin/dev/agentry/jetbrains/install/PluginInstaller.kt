@@ -40,17 +40,33 @@ class PluginInstaller {
         val installed = mutableListOf<InstalledComponent>()
         val failed = mutableListOf<ComponentError>()
 
+        // Security gate: validate manifest + every component name before any installer
+        // touches the filesystem. SkillBundleInstaller used to do this on its own; the
+        // other installers (Hook / MCP / Command) interpolate names directly into paths
+        // via InstallPaths, so an unvalidated name like `"../../etc"` would escape.
+        if (!dev.agentry.jetbrains.util.InputValidation.isValidComponentName(manifest.name)) {
+            return PluginInstallReport(
+                pluginName = manifest.name,
+                installed = emptyList(),
+                failed = components.map {
+                    ComponentError(it.kind, it.name, "invalid plugin name: '${manifest.name}'", recoverable = false)
+                }
+            )
+        }
+
         components.forEach { component ->
-            val kind = kindOf(component)
-            val scope = scopeOverrides[kind to component.name] ?: defaultScope
-            val installer = installerFor(component)
-            runCatching { installer.install(component, manifest, scope) }
-                .onSuccess { dest -> installed += InstalledComponent(kind, component.name, dest, scope) }
+            val scope = scopeOverrides[component.kind to component.name] ?: defaultScope
+            if (!dev.agentry.jetbrains.util.InputValidation.isValidComponentName(component.name)) {
+                failed += ComponentError(component.kind, component.name, "invalid component name", recoverable = false)
+                return@forEach
+            }
+            runCatching { dispatch(component, manifest, scope) }
+                .onSuccess { dest -> installed += InstalledComponent(component.kind, component.name, dest, scope) }
                 .onFailure { e ->
                     val recoverable = e is UnsupportedComponentException
-                    log.info("Component ${component.name} (${kind.name}) install failed: ${e.message}")
+                    log.info("Component ${component.name} (${component.kind.name}) install failed: ${e.message}")
                     failed += ComponentError(
-                        kind = kind,
+                        kind = component.kind,
                         name = component.name,
                         reason = e.message ?: e::class.simpleName.orEmpty(),
                         recoverable = recoverable
@@ -60,22 +76,19 @@ class PluginInstaller {
         return PluginInstallReport(manifest.name, installed, failed)
     }
 
-    @Suppress("UNCHECKED_CAST")
-    private fun installerFor(component: PluginComponent): ComponentInstaller<PluginComponent> = when (component) {
-        is PluginComponent.Skill -> SkillBundleInstaller() as ComponentInstaller<PluginComponent>
-        is PluginComponent.Command -> CommandInstaller() as ComponentInstaller<PluginComponent>
-        is PluginComponent.Agent -> AgentInstaller() as ComponentInstaller<PluginComponent>
-        is PluginComponent.Hook -> HookInstaller() as ComponentInstaller<PluginComponent>
-        is PluginComponent.McpServer -> McpInstaller() as ComponentInstaller<PluginComponent>
-    }
-
-    private fun kindOf(component: PluginComponent): ComponentKind = when (component) {
-        is PluginComponent.Skill -> ComponentKind.SKILL
-        is PluginComponent.Command -> ComponentKind.COMMAND
-        is PluginComponent.Agent -> ComponentKind.AGENT
-        is PluginComponent.Hook -> ComponentKind.HOOK
-        is PluginComponent.McpServer -> ComponentKind.MCP_SERVER
-    }
+    /**
+     * Type-safe dispatch on the sealed [PluginComponent]: the `when` exhaustively maps each
+     * subtype to its installer with no unchecked cast. Each branch keeps the precise
+     * generic type, so [SkillBundleInstaller] sees `Skill`, [HookInstaller] sees `Hook`, etc.
+     */
+    private fun dispatch(component: PluginComponent, manifest: PluginManifest, scope: InstallScope): java.io.File =
+        when (component) {
+            is PluginComponent.Skill -> SkillBundleInstaller().install(component, manifest, scope)
+            is PluginComponent.Command -> CommandInstaller().install(component, manifest, scope)
+            is PluginComponent.Agent -> AgentInstaller().install(component, manifest, scope)
+            is PluginComponent.Hook -> HookInstaller().install(component, manifest, scope)
+            is PluginComponent.McpServer -> McpInstaller().install(component, manifest, scope)
+        }
 
     companion object {
         fun getInstance(): PluginInstaller =

@@ -14,11 +14,13 @@ import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.PluginInstallReport
 import dev.agentry.jetbrains.install.PluginInstaller
 import dev.agentry.jetbrains.install.installers.InstallPaths
-import dev.agentry.jetbrains.model.ComponentKind
 import dev.agentry.jetbrains.model.PluginComponent
 import dev.agentry.jetbrains.model.PluginManifest
 import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
+import dev.agentry.jetbrains.util.InputValidation
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import javax.swing.tree.TreeNode
 
 /**
@@ -69,8 +71,9 @@ private fun runComponentOp(project: Project, nodes: List<AgentryNode.Component>,
                 indicator.isIndeterminate = false
                 val basePath = project.basePath?.let { File(it) }
                 val scope: InstallScope = if (basePath != null) InstallScope.Project(basePath) else InstallScope.Global
-                val byPlugin: Map<PluginManifest, List<AgentryNode.Component>> =
-                    nodes.groupBy { it.parentPluginManifest() ?: synthetic(it) }
+                val byPlugin: Map<PluginManifest, List<AgentryNode.Component>> = nodes
+                    .mapNotNull { node -> node.parentPluginManifest()?.let { it to node } }
+                    .groupBy({ it.first }, { it.second })
 
                 val reports = mutableListOf<PluginInstallReport>()
                 val entries = byPlugin.entries.toList()
@@ -97,8 +100,9 @@ private fun runComponentOp(project: Project, nodes: List<AgentryNode.Component>,
 
 /**
  * Walks back up the tree to find the [PluginManifest] this component belongs to.
- * Synthesised manifest as fallback (only happens for orphaned nodes — shouldn't occur
- * in practice once the tree is freshly built).
+ * Orphaned nodes (with no `Plugin` parent) are skipped by callers via `mapNotNull` —
+ * we never want to install a component without knowing which plugin it came from
+ * (the plugin name drives install paths, variable expansion, etc.).
  */
 private fun AgentryNode.Component.parentPluginManifest(): PluginManifest? {
     var p: TreeNode? = this.parent
@@ -109,21 +113,12 @@ private fun AgentryNode.Component.parentPluginManifest(): PluginManifest? {
     return null
 }
 
-private fun synthetic(node: AgentryNode.Component): PluginManifest = PluginManifest(
-    name = node.name,
-    displayName = null, version = null, description = null, author = null,
-    homepage = null, repository = null, license = null,
-    keywords = emptyList(),
-    skills = emptyList(), commands = emptyList(), agents = emptyList(),
-    hooks = emptyList(), mcpServers = emptyList(),
-    pluginRoot = File("."),
-    dialect = dev.agentry.jetbrains.model.ManifestDialect.DIRNAME_ONLY
-)
-
 /**
- * Uninstall is not on `PluginInstaller` yet (Phase 3 only implemented install). We mirror
- * the install destinations here and delete what's there. Future work folds this back into
- * `PluginInstaller` proper as a sibling `uninstallPlugin`.
+ * Uninstall components from disk. Mirror of the install side — every dest path is name-
+ * validated AND symlink-checked before removal so an attacker-controlled plugin name
+ * can't trick us into walking out of the install root or following a symlink to delete
+ * the wrong files. Future work folds this back into `PluginInstaller` proper as a sibling
+ * `uninstallPlugin`.
  */
 private fun uninstallComponents(
     plugin: PluginManifest,
@@ -132,38 +127,32 @@ private fun uninstallComponents(
 ): PluginInstallReport {
     val installed = mutableListOf<dev.agentry.jetbrains.install.InstalledComponent>()
     val failed = mutableListOf<dev.agentry.jetbrains.install.ComponentError>()
+    val pluginNameOk = InputValidation.isValidComponentName(plugin.name)
     components.forEach { c ->
-        val kind = kindOf(c)
-        val dest = destFor(c, plugin, scope)
+        if (!pluginNameOk || !InputValidation.isValidComponentName(c.name)) {
+            failed += dev.agentry.jetbrains.install.ComponentError(
+                c.kind, c.name, "invalid plugin or component name", recoverable = false
+            )
+            return@forEach
+        }
+        val dest = InstallPaths.destFor(c, plugin, scope)
         runCatching {
-            if (dest.exists()) {
-                if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
+            val destPath = dest.toPath()
+            if (!Files.exists(destPath, LinkOption.NOFOLLOW_LINKS)) return@runCatching
+            if (Files.isSymbolicLink(destPath)) {
+                // Refuse — don't follow a symlink that may point outside the install root.
+                throw SecurityException("Refusing to delete symlinked install destination: $dest")
             }
+            if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
         }.onSuccess {
-            installed += dev.agentry.jetbrains.install.InstalledComponent(kind, c.name, dest, scope)
+            installed += dev.agentry.jetbrains.install.InstalledComponent(c.kind, c.name, dest, scope)
         }.onFailure { e ->
             failed += dev.agentry.jetbrains.install.ComponentError(
-                kind, c.name, e.message ?: "unknown", recoverable = false
+                c.kind, c.name, e.message ?: "unknown", recoverable = e is SecurityException
             )
         }
     }
     return PluginInstallReport(plugin.name, installed, failed)
-}
-
-private fun kindOf(c: PluginComponent): ComponentKind = when (c) {
-    is PluginComponent.Skill -> ComponentKind.SKILL
-    is PluginComponent.Command -> ComponentKind.COMMAND
-    is PluginComponent.Agent -> ComponentKind.AGENT
-    is PluginComponent.Hook -> ComponentKind.HOOK
-    is PluginComponent.McpServer -> ComponentKind.MCP_SERVER
-}
-
-private fun destFor(c: PluginComponent, plugin: PluginManifest, scope: InstallScope): File = when (c) {
-    is PluginComponent.Skill -> InstallPaths.skillDir(c.name, scope)
-    is PluginComponent.Command -> InstallPaths.promptFile(c.name, scope)
-    is PluginComponent.Agent -> InstallPaths.skillDir("agent-${c.name}", scope)
-    is PluginComponent.Hook -> InstallPaths.hookDir(plugin.name, scope)
-    is PluginComponent.McpServer -> InstallPaths.mcpDir(plugin.name, scope)
 }
 
 private fun notify(project: Project, verb: String, reports: List<PluginInstallReport>, cancelled: Boolean) {

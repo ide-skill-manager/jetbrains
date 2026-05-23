@@ -229,11 +229,15 @@ class PluginScanner {
     /**
      * Resolve [path] relative to [root]. Refuses to return anything outside [root] so a
      * manifest path of `../../etc/passwd` can't pull files from outside the plugin tree.
+     *
+     * Uses `Path.startsWith` (via [dev.agentry.jetbrains.util.InputValidation.isInsideDir])
+     * — *not* `String.startsWith` on canonicalPath, which has the classic `/foo` vs `/foobar`
+     * prefix-confusion bug.
      */
     private fun resolveInside(root: File, path: String): File? {
         val candidate = File(root, path)
         if (!candidate.exists()) return null
-        return if (candidate.canonicalPath.startsWith(root.canonicalPath)) candidate else null
+        return if (dev.agentry.jetbrains.util.InputValidation.isInsideDir(candidate, root)) candidate else null
     }
 
     /**

@@ -1,8 +1,9 @@
 package dev.agentry.jetbrains.install.installers
 
+import dev.agentry.jetbrains.install.ExpansionEnv
 import dev.agentry.jetbrains.install.InstallScope
+import dev.agentry.jetbrains.install.VariableExpansion
 import dev.agentry.jetbrains.install.copySafe
-import dev.agentry.jetbrains.install.expandPluginVariables
 import dev.agentry.jetbrains.model.PluginComponent
 import dev.agentry.jetbrains.model.PluginManifest
 import java.io.File
@@ -36,11 +37,9 @@ internal class McpInstaller : ComponentInstaller<PluginComponent.McpServer> {
         }
 
         val configText = component.configFile.readText()
-        val expanded = expandPluginVariables(
-            text = configText,
-            pluginRoot = dest,
-            pluginDataDir = InstallPaths.pluginDataDir(plugin.name),
-            projectDir = if (scope is InstallScope.Project) scope.projectDir else null
+        val expanded = VariableExpansion.expand(
+            configText,
+            ExpansionEnv.forJetBrainsInstall(dest, InstallPaths.pluginDataDir(plugin.name))
         )
         Files.writeString(destConfig.toPath(), expanded)
         return dest
