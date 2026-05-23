@@ -113,42 +113,68 @@ class PluginInstallerTest : BasePlatformTestCase() {
         assertTrue(cfg.contains(destDir.canonicalPath))
     }
 
-    fun testAgentInstallSurfacesAsRecoverableFailure() {
+    fun testAgentInstallLandsAtGithubAgentsPath() {
         val (root, projectDir) = newPluginAndProject("agent-plugin")
         File(root, "agents").mkdirs()
-        File(root, "agents/foo.agent.md").writeText("---\nname: foo\n---\nbody")
+        File(root, "agents/foo.agent.md").writeText(
+            "---\nname: foo\ndescription: 'Reviews diffs'\nmodel: claude-3-5-sonnet\n---\nBody"
+        )
         val manifest = manifest(root, "agent-plugin")
         val components = listOf(
             PluginComponent.Agent(
                 name = "foo",
                 sourceFile = File(root, "agents/foo.agent.md"),
-                description = null
+                description = "Reviews diffs"
             )
         )
         val report = PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
-        assertTrue(report.isFullFailure)
-        val err = report.failed.single()
-        assertEquals(ComponentKind.AGENT, err.kind)
-        assertTrue("agent install errors are recoverable", err.recoverable)
+        assertTrue("expected full success, got: ${report.failed}", report.isFullSuccess)
+        val dest = File(projectDir, ".github/agents/foo.agent.md")
+        assertTrue("file landed at canonical path", dest.exists())
+        val written = dest.readText()
+        // We always single-quote scalars per the awesome-copilot style guide.
+        assertTrue("name preserved (quoted)", written.contains("name: 'foo'"))
+        assertTrue("description preserved (quoted)", written.contains("description: 'Reviews diffs'"))
+        assertTrue("body preserved", written.contains("Body"))
+        // Other frontmatter passes through untouched.
+        assertTrue("other frontmatter passed through", written.contains("model: claude-3-5-sonnet"))
+    }
+
+    fun testAgentInstallBackfillsMissingDescription() {
+        val (root, projectDir) = newPluginAndProject("agent-no-desc")
+        File(root, "agents").mkdirs()
+        File(root, "agents/quiet.agent.md").writeText("---\nname: quiet\n---\nFirst paragraph of the body.\n\nSecond paragraph.")
+        val components = listOf(
+            PluginComponent.Agent("quiet", File(root, "agents/quiet.agent.md"), description = null)
+        )
+        val report = PluginInstaller().installPlugin(manifest(root, "agent-no-desc"), components, InstallScope.Project(projectDir))
+        assertTrue(report.isFullSuccess)
+        val written = File(projectDir, ".github/agents/quiet.agent.md").readText()
+        // Backfill picks the first non-empty paragraph (trimmed to 120 chars).
+        assertTrue("backfilled description", written.contains("description: ") && written.contains("First paragraph"))
     }
 
     fun testMixedSuccessAndFailureProducesPartialReport() {
         val (root, projectDir) = newPluginAndProject("mixed")
         File(root, "skills/ok").mkdirs()
         File(root, "skills/ok/SKILL.md").writeText("---\nname: ok\n---\n")
+        // Force a real failure: an MCP component whose configFile doesn't exist on disk.
+        // Hooks/MCP installers fail loudly if they can't read their config; skill installs fine.
         File(root, "agents").mkdirs()
-        File(root, "agents/bad.agent.md").writeText("---\nname: bad\n---\n")
-        val manifest = manifest(root, "mixed")
         val components = listOf(
             PluginComponent.Skill("ok", File(root, "skills/ok"), File(root, "skills/ok/SKILL.md"), emptyList()),
-            PluginComponent.Agent("bad", File(root, "agents/bad.agent.md"), null)
+            PluginComponent.McpServer(
+                name = "broken",
+                configFile = File(root, "does-not-exist.mcp.json"),
+                bundledFiles = emptyList()
+            )
         )
-        val report = PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
-        assertTrue(report.isPartial)
+        val report = PluginInstaller().installPlugin(manifest(root, "mixed"), components, InstallScope.Project(projectDir))
+        assertTrue("expected partial report", report.isPartial)
         assertEquals(1, report.installed.size)
         assertEquals(ComponentKind.SKILL, report.installed.single().kind)
         assertEquals(1, report.failed.size)
-        assertEquals(ComponentKind.AGENT, report.failed.single().kind)
+        assertEquals(ComponentKind.MCP_SERVER, report.failed.single().kind)
     }
 
     private fun newPluginAndProject(name: String): Pair<File, File> {

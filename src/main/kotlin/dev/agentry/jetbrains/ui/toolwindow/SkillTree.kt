@@ -247,12 +247,6 @@ private class SkillTreeRenderer : CheckboxTree.CheckboxTreeCellRenderer(/*opaque
                 SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, successFg())
             )
         }
-        if (node.kind == dev.agentry.jetbrains.model.ComponentKind.AGENT) {
-            textRenderer.append(
-                "  unsupported on JetBrains",
-                SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor.ORANGE)
-            )
-        }
     }
 
     private fun describeComponent(c: dev.agentry.jetbrains.model.PluginComponent): String = when (c) {

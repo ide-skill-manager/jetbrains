@@ -2,6 +2,7 @@ package dev.agentry.jetbrains.install.installers
 
 import com.intellij.openapi.diagnostic.logger
 import dev.agentry.jetbrains.install.InstallScope
+import dev.agentry.jetbrains.install.splitFrontmatter
 import dev.agentry.jetbrains.model.PluginComponent
 import dev.agentry.jetbrains.model.PluginManifest
 import java.io.File
@@ -66,19 +67,4 @@ internal class CommandInstaller : ComponentInstaller<PluginComponent.Command> {
         return rewritten
     }
 
-    /** Return (frontmatter contents without `---` fences, body) or (null, body) when no frontmatter. */
-    private fun splitFrontmatter(text: String): Pair<String?, String> {
-        if (!text.trimStart().startsWith("---")) return null to text
-        val lines = text.lines()
-        var i = 1
-        val fm = StringBuilder()
-        while (i < lines.size && lines[i].trim() != "---") {
-            if (fm.isNotEmpty()) fm.append("\n")
-            fm.append(lines[i])
-            i++
-        }
-        if (i >= lines.size) return null to text // unterminated fence; treat as body
-        val body = lines.drop(i + 1).joinToString("\n")
-        return fm.toString() to body
-    }
 }

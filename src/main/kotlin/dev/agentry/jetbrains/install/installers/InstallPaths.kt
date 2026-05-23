@@ -44,6 +44,20 @@ internal object InstallPaths {
     }
 
     /**
+     * Custom Chat Agents — `<project>/.github/agents/<name>.agent.md` (Project) or
+     * `~/.copilot/agents/<name>.agent.md` (Global).
+     *
+     * Source: [GitHub Docs — Creating custom agents](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/create-custom-agents-in-your-ide).
+     * The Copilot for JetBrains plugin auto-discovers `.agent.md` files at the project
+     * path — no manual registration. The global path is documented for VS Code; we use
+     * the same convention for JetBrains and call out the empirical gap in the spec.
+     */
+    fun agentFile(agentName: String, scope: InstallScope): File = when (scope) {
+        is InstallScope.Project -> File(scope.projectDir, ".github/agents/$agentName.agent.md")
+        is InstallScope.Global -> File(userHome, ".copilot/agents/$agentName.agent.md")
+    }
+
+    /**
      * `${CLAUDE_PLUGIN_DATA}` resolves here. The spec is explicit: "directory created
      * lazily on first access." Component installers create it on demand.
      */
@@ -63,7 +77,7 @@ internal object InstallPaths {
     ): File = when (component) {
         is dev.agentry.jetbrains.model.PluginComponent.Skill -> skillDir(component.name, scope)
         is dev.agentry.jetbrains.model.PluginComponent.Command -> promptFile(component.name, scope)
-        is dev.agentry.jetbrains.model.PluginComponent.Agent -> skillDir("agent-${component.name}", scope)
+        is dev.agentry.jetbrains.model.PluginComponent.Agent -> agentFile(component.name, scope)
         is dev.agentry.jetbrains.model.PluginComponent.Hook -> hookDir(plugin.name, scope)
         is dev.agentry.jetbrains.model.PluginComponent.McpServer -> mcpDir(plugin.name, scope)
     }

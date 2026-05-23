@@ -12,6 +12,34 @@ import java.nio.file.StandardCopyOption
  * subdirectories, individual files) cause a [SecurityException]. Every destination is
  * canonical-path-checked to stay inside [dest].
  */
+/**
+ * Split a markdown body into `(frontmatter-without-fences, body)` or `(null, body)` when
+ * there's no `---` fence at the top. Used by the installers that need to rewrite a few
+ * frontmatter fields while preserving the rest of the file. Hand-rolled — `FrontmatterReader`
+ * is read-only.
+ */
+internal fun splitFrontmatter(text: String): Pair<String?, String> {
+    if (!text.trimStart().startsWith("---")) return null to text
+    val lines = text.lines()
+    var i = 1
+    val fm = StringBuilder()
+    while (i < lines.size && lines[i].trim() != "---") {
+        if (fm.isNotEmpty()) fm.append("\n")
+        fm.append(lines[i])
+        i++
+    }
+    if (i >= lines.size) return null to text // unterminated fence; treat as body
+    val body = lines.drop(i + 1).joinToString("\n")
+    return fm.toString() to body
+}
+
+/** Create parent directories then write [text] to [this]. The two-line pattern showed up
+ *  in every installer that writes a single text file. */
+internal fun File.writeTextEnsuringParent(text: String) {
+    Files.createDirectories(parentFile.toPath())
+    Files.writeString(toPath(), text)
+}
+
 internal fun copySafe(source: File, dest: File) {
     if (Files.isSymbolicLink(source.toPath())) {
         throw SecurityException("Refusing to copy from symlinked source: $source")
