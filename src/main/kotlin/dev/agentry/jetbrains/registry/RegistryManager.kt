@@ -51,7 +51,7 @@ class RegistryManager {
             val localDir = localDirFor(source)
             if (localDir.exists()) pull(localDir, source.ref, progress)
             else clone(source.url, localDir, source.ref, progress)
-            parser.scanDirectory(localDir, source.url)
+            parser.scanDirectory(localDir, source.url, source.ref)
         }.onFailure { e ->
             log.warn("Failed to fetch registry ${source.url}: ${e.message}")
         }.getOrDefault(emptyList())
@@ -60,15 +60,16 @@ class RegistryManager {
     /** Read previously-fetched skills without network IO. */
     fun getCached(source: RegistrySource): List<SkillManifest> {
         val dir = localDirFor(source)
-        return if (dir.exists()) parser.scanDirectory(dir, source.url) else emptyList()
+        return if (dir.exists()) parser.scanDirectory(dir, source.url, source.ref) else emptyList()
     }
 
     /**
-     * Cache directory for [source]. Uses SHA-256 prefix of the URL so that two different
-     * URLs never collide on the truncated/sanitised form.
+     * Cache directory for [source]. The key includes both URL and ref so that the same
+     * repository registered at two different refs (e.g. `main` and `feature/wip`) gets
+     * two separate working copies and never overwrites itself.
      */
     fun localDirFor(source: RegistrySource): File {
-        val hash = sha256(source.url).take(16)
+        val hash = sha256("${source.url}@${source.ref}").take(16)
         val readable = source.url.substringAfterLast('/').removeSuffix(".git")
             .replace(Regex("[^A-Za-z0-9_\\-]"), "_")
             .take(40)

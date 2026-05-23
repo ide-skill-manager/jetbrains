@@ -13,6 +13,7 @@ import dev.agentry.jetbrains.registry.ManifestParser
 import dev.agentry.jetbrains.registry.RegistryManager
 import dev.agentry.jetbrains.util.InputValidation
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -37,10 +38,14 @@ class SkillInstaller {
     /**
      * Install a skill. Returns the install directory on success.
      *
-     * Atomically replaces any existing install: copies into a sibling temp directory and
-     * then renames into place. This guarantees that updating a skill never leaves orphaned
-     * files from the previous version on disk, and that a failed copy can't half-overwrite
-     * the existing install.
+     * The replace sequence is:
+     *   1. copy source → sibling staging dir (so a failed copy leaves the old install intact)
+     *   2. rename existing dest → backup (if dest already exists)
+     *   3. rename staging → dest
+     *   4. delete backup
+     *
+     * If step 3 fails after the backup move, we restore the backup. The user always sees
+     * either the previous install or the new one — never a partial state, never nothing.
      */
     fun install(
         manifest: SkillManifest,
@@ -57,15 +62,28 @@ class SkillInstaller {
         val parent = dest.parentFile ?: error("Install target has no parent: $dest")
         Files.createDirectories(parent.toPath())
         val staging = File(parent, ".${dest.name}.installing-${System.nanoTime()}")
+        val backup = File(parent, ".${dest.name}.backup-${System.nanoTime()}")
+
         try {
             copySkill(sourceDir, staging)
-            // Swap: remove the old install, then rename the staging dir into place.
-            if (dest.exists()) dest.deleteRecursively()
-            if (!staging.renameTo(dest)) {
-                // Fall back to recursive copy for cross-filesystem cases.
-                staging.copyRecursively(dest, overwrite = true)
-                staging.deleteRecursively()
+            // Old install (if any) → backup, so we can roll back.
+            if (dest.exists() && !dest.renameTo(backup)) {
+                throw IOException("Could not move existing install aside: ${dest.absolutePath}")
             }
+            try {
+                if (!staging.renameTo(dest)) {
+                    // Cross-filesystem fallback: copy then delete the staging tree.
+                    staging.copyRecursively(dest, overwrite = false)
+                    staging.deleteRecursively()
+                }
+            } catch (e: Throwable) {
+                // Roll back: nuke any half-written dest, restore backup if we had one.
+                dest.deleteRecursively()
+                if (backup.exists()) backup.renameTo(dest)
+                throw e
+            }
+            // Success: clean up backup.
+            if (backup.exists()) backup.deleteRecursively()
         } catch (e: Throwable) {
             staging.deleteRecursively()
             throw e
@@ -117,16 +135,15 @@ class SkillInstaller {
     }
 
     /**
-     * Look up the source directory for [manifest], scoped to its origin registry to prevent
-     * cross-registry shadowing attacks. Returns null if the manifest's registry isn't cached
-     * or the manifest can't be located within it.
+     * Look up the source directory for [manifest], scoped to its origin registry *at the
+     * exact ref it was fetched from*. Both fields are needed because the cache directory
+     * key includes both — the same URL registered at two refs has two cache dirs.
      */
     private fun resolveSourceDir(manifest: SkillManifest): File? {
         if (manifest.sourceRegistry.isBlank()) return null
-        val source = RegistrySource(url = manifest.sourceRegistry)
+        val source = RegistrySource(url = manifest.sourceRegistry, ref = manifest.sourceRef)
         val registryDir = RegistryManager.getInstance().localDirFor(source)
         if (!registryDir.isDirectory) return null
-        // Skill is either at the registry root or in an immediate subdirectory.
         val candidate = File(registryDir, manifest.name)
         if (candidate.isDirectory) return candidate
         if (parser.scanDirectory(registryDir).any { it.name == manifest.name }) return registryDir

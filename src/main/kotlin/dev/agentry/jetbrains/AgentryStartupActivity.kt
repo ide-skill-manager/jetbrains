@@ -23,8 +23,10 @@ import dev.agentry.jetbrains.sync.ProjectSyncService
  * 2. Otherwise, surface a balloon notification offering "Trust and sync" / "Sync once" so the
  *    user gets one-click opt-in without giving blanket consent to every repo they open.
  *
- * Also registers a VFS listener that reacts to live edits of `.agentry/config.yaml` — an
- * agent or human can write the file mid-session and the plugin will offer to re-sync.
+ * A VFS listener on `.agentry/config.yaml` is also registered for the lifetime of the
+ * project. When the file changes and the project is trusted *and* `autoSyncOnOpen` is on,
+ * the listener triggers an automatic re-sync. In the non-trusted / opt-out case it stays a
+ * no-op — users have to explicitly re-run the sync via the `Agentry: Sync Config` action.
  */
 class AgentryStartupActivity : ProjectActivity {
 

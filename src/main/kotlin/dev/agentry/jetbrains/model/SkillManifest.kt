@@ -13,7 +13,13 @@ data class SkillManifest(
     val displayName: String = "",
     val description: String = "",
     /** Registry this manifest was fetched from (the source URL). Empty when loaded locally. */
-    val sourceRegistry: String = ""
+    val sourceRegistry: String = "",
+    /**
+     * The git ref at which this manifest was fetched. Stored alongside [sourceRegistry]
+     * so the installer can locate the right cache directory when the same URL is registered
+     * twice with different refs (e.g. `main` and a WIP branch).
+     */
+    val sourceRef: String = "HEAD"
 )
 
 /** Installation status surfaced in the tool window. */

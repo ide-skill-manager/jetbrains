@@ -18,7 +18,11 @@ class ManifestParser {
         .registerKotlinModule()
 
     /** Parse a single manifest. Returns null if it can't be read or has no usable name. */
-    fun parseFile(file: File, sourceRegistry: String = ""): SkillManifest? = runCatching {
+    fun parseFile(
+        file: File,
+        sourceRegistry: String = "",
+        sourceRef: String = "HEAD"
+    ): SkillManifest? = runCatching {
         val raw = mapper.readTree(file)
         val name = raw.path("name").asText("")
         if (!InputValidation.isValidSkillName(name)) return@runCatching null
@@ -27,16 +31,21 @@ class ManifestParser {
             version = raw.path("version").asText("0.0.1"),
             displayName = raw.path("displayName").asText(name),
             description = raw.path("description").asText(""),
-            sourceRegistry = sourceRegistry
+            sourceRegistry = sourceRegistry,
+            sourceRef = sourceRef
         )
     }.getOrNull()
 
     /** Find manifests in [dir] itself and each immediate subdirectory. */
-    fun scanDirectory(dir: File, sourceRegistry: String = ""): List<SkillManifest> {
+    fun scanDirectory(
+        dir: File,
+        sourceRegistry: String = "",
+        sourceRef: String = "HEAD"
+    ): List<SkillManifest> {
         if (!dir.isDirectory) return emptyList()
         val candidates = listOf(dir) + (dir.listFiles()?.filter { it.isDirectory }.orEmpty())
         return candidates.mapNotNull { c ->
-            findManifestIn(c)?.let { parseFile(it, sourceRegistry) }
+            findManifestIn(c)?.let { parseFile(it, sourceRegistry, sourceRef) }
         }
     }
 
