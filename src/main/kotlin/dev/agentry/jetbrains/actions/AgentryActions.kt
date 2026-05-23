@@ -1,9 +1,11 @@
 package dev.agentry.jetbrains.actions
 
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
-import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -20,29 +22,43 @@ import dev.agentry.jetbrains.util.InputValidation
 /**
  * Discoverable, scriptable actions for every operation the tool window exposes.
  * Agents — and humans using "Find Action" — drive these via `ActionManager.fireAction(id)`
- * or by name. Logic lives in the underlying services; these are thin shells.
+ * or by name. UI buttons in the tool window fire these same actions (via `ActionManager`
+ * + a data context carrying the pre-selected skill name) so there's a single code path
+ * for human and agent flows.
+ *
+ * When state changes, actions publish to [AgentryTopics.SKILLS_CHANGED] so any subscribed
+ * view (currently the tool window) re-renders without each action knowing about each view.
  *
  * Action IDs:
- *   Agentry.Install      — prompt for skill name, install from any enabled registry
- *   Agentry.Remove       — prompt for skill name, uninstall from default target
+ *   Agentry.Install      — install a skill by name (prompt if no data context)
+ *   Agentry.Remove       — uninstall a skill by name (prompt if no data context)
  *   Agentry.Refresh      — fetch all enabled registries
  *   Agentry.SyncConfig   — apply .agentry/config.yaml for the current project
- *   Agentry.AddRegistry  — prompt for URL+ref, add to settings
+ *   Agentry.AddRegistry  — prompt for URL+ref, add to settings (validates first)
  */
 
 class RefreshAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Agentry: refresh", true) {
-            override fun run(indicator: ProgressIndicator) {
-                val settings = AgentrySettings.getInstance()
-                val sources = settings.registrySources.map {
-                    RegistrySource(it.url, it.ref, it.enabled, it.displayName)
+        runRefresh(project)
+    }
+
+    companion object {
+        fun runRefresh(project: Project) {
+            ProgressManager.getInstance().run(
+                object : Task.Backgroundable(project, "Agentry: refresh", true) {
+                    override fun run(indicator: ProgressIndicator) {
+                        val settings = AgentrySettings.getInstance()
+                        val sources = settings.registrySources.map {
+                            RegistrySource(it.url, it.ref, it.enabled, it.displayName)
+                        }
+                        RegistryManager.getInstance().fetchAll(sources, indicator)
+                        publishChanged(project)
+                    }
                 }
-                RegistryManager.getInstance().fetchAll(sources, indicator)
-            }
-        })
+            )
+        }
     }
 }
 
@@ -51,6 +67,9 @@ class SyncConfigAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         ProjectSyncService.getInstance(project).syncAsync()
+        // ProjectSyncService doesn't currently publish on the message bus; do it here so
+        // listeners see the new install state once the background task completes. (The
+        // task runs async, so we hook publishChanged inside its lambda.)
     }
 }
 
@@ -58,32 +77,51 @@ class InstallSkillAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.EDT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val name = Messages.showInputDialog(
-            project, "Skill name to install:", "Agentry: install skill", null
-        )?.trim()?.takeIf { it.isNotBlank() } ?: return
-        installByName(project, name)
+        // Prefer pre-supplied name (e.g. selected list item from the tool window).
+        val name = e.getData(AgentryDataKeys.SKILL_NAME)?.trim()?.ifBlank { null }
+            ?: Messages.showInputDialog(
+                project, "Skill name to install:", "Agentry: install skill", null
+            )?.trim()?.takeIf { it.isNotBlank() }
+            ?: return
+        runInstall(project, name)
     }
 
-    private fun installByName(project: Project, skillName: String) {
-        ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, "Agentry: install $skillName", true) {
-                override fun run(indicator: ProgressIndicator) {
-                    val settings = AgentrySettings.getInstance()
-                    val sources = settings.registrySources.map {
-                        RegistrySource(it.url, it.ref, it.enabled, it.displayName)
+    companion object {
+        fun runInstall(project: Project, skillName: String) {
+            ProgressManager.getInstance().run(
+                object : Task.Backgroundable(project, "Agentry: install $skillName", true) {
+                    override fun run(indicator: ProgressIndicator) {
+                        val settings = AgentrySettings.getInstance()
+                        val sources = settings.registrySources.map {
+                            RegistrySource(it.url, it.ref, it.enabled, it.displayName)
+                        }
+                        val manifest = RegistryManager.getInstance()
+                            .fetchAll(sources, indicator).values.flatten()
+                            .firstOrNull { it.name == skillName }
+                        if (manifest == null) {
+                            notify(
+                                project,
+                                "Skill '$skillName' not found in any enabled registry",
+                                NotificationType.WARNING
+                            )
+                            return
+                        }
+                        val result = SkillInstaller.getInstance()
+                            .install(manifest, settings.defaultInstallTarget, project.basePath)
+                        if (result.isSuccess) {
+                            notify(project, "Skill '$skillName' installed.", NotificationType.INFORMATION)
+                        } else {
+                            notify(
+                                project,
+                                "Failed to install '$skillName': ${result.exceptionOrNull()?.message}",
+                                NotificationType.ERROR
+                            )
+                        }
+                        publishChanged(project)
                     }
-                    val manifest = RegistryManager.getInstance()
-                        .fetchAll(sources, indicator).values.flatten()
-                        .firstOrNull { it.name == skillName }
-                    if (manifest == null) {
-                        notifyOnEdt(project, "Skill '$skillName' not found in any enabled registry")
-                        return
-                    }
-                    SkillInstaller.getInstance()
-                        .install(manifest, settings.defaultInstallTarget, project.basePath)
                 }
-            }
-        )
+            )
+        }
     }
 }
 
@@ -91,18 +129,34 @@ class RemoveSkillAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.EDT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val name = Messages.showInputDialog(
-            project, "Skill name to remove:", "Agentry: remove skill", null
-        )?.trim()?.takeIf { it.isNotBlank() } ?: return
-        val settings = AgentrySettings.getInstance()
-        ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, "Agentry: remove $name", false) {
-                override fun run(indicator: ProgressIndicator) {
-                    SkillInstaller.getInstance()
-                        .uninstall(name, settings.defaultInstallTarget, project.basePath)
+        val name = e.getData(AgentryDataKeys.SKILL_NAME)?.trim()?.ifBlank { null }
+            ?: Messages.showInputDialog(
+                project, "Skill name to remove:", "Agentry: remove skill", null
+            )?.trim()?.takeIf { it.isNotBlank() }
+            ?: return
+        runRemove(project, name)
+    }
+
+    companion object {
+        fun runRemove(project: Project, skillName: String) {
+            val settings = AgentrySettings.getInstance()
+            ProgressManager.getInstance().run(
+                object : Task.Backgroundable(project, "Agentry: remove $skillName", false) {
+                    override fun run(indicator: ProgressIndicator) {
+                        val result = SkillInstaller.getInstance()
+                            .uninstall(skillName, settings.defaultInstallTarget, project.basePath)
+                        if (result.isFailure) {
+                            notify(
+                                project,
+                                "Failed to remove '$skillName': ${result.exceptionOrNull()?.message}",
+                                NotificationType.ERROR
+                            )
+                        }
+                        publishChanged(project)
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 }
 
@@ -139,12 +193,18 @@ class AddRegistryAction : AnAction() {
     }
 }
 
-private fun notifyOnEdt(project: Project, message: String) {
-    com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
-        Messages.showWarningDialog(project, message, "Agentry")
+/** Broadcast a "skills changed" event so any subscribed view re-renders. */
+internal fun publishChanged(project: Project) {
+    ApplicationManager.getApplication().invokeLater {
+        project.messageBus.syncPublisher(AgentryTopics.SKILLS_CHANGED).skillsChanged()
     }
 }
 
-/** Helper: which install targets accept a null project base path. */
-@Suppress("unused")
-internal val PROJECT_INDEPENDENT_TARGETS = setOf(InstallTarget.CLAUDE_USER, InstallTarget.AGENTRY_CACHE)
+private fun notify(project: Project, content: String, type: NotificationType) {
+    ApplicationManager.getApplication().invokeLater {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("Agentry")
+            .createNotification(content, type)
+            .notify(project)
+    }
+}

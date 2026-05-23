@@ -78,14 +78,36 @@ class RegistryManager {
 
     private fun clone(url: String, target: File, ref: String, progress: ProgressIndicator?) {
         Files.createDirectories(target.toPath())
-        val cmd = mutableListOf("git", "clone", "--quiet", "--depth=1")
-        if (ref != "HEAD") {
-            cmd += listOf("--branch", ref)
+        if (ref == "HEAD" || !looksLikeSha(ref)) {
+            // Branch or tag — `git clone --branch <ref>` accepts these and short-circuits
+            // history to the matching ref, leaving us with a shallow clone we can fetch
+            // updates against later.
+            val cmd = mutableListOf("git", "clone", "--quiet", "--depth=1")
+            if (ref != "HEAD") cmd += listOf("--branch", ref)
+            // `--` terminates option parsing so url/target can never be interpreted as flags.
+            cmd += listOf("--", url, target.absolutePath)
+            runGit(cmd, progress)
+        } else {
+            // Commit SHA — `--branch` won't accept it. Init an empty repo, add the remote,
+            // fetch the specific commit shallowly, then reset to it.
+            runGit(listOf("git", "init", "--quiet", target.absolutePath), progress)
+            runGit(
+                listOf("git", "-C", target.absolutePath, "remote", "add", "origin", url),
+                progress
+            )
+            runGit(
+                listOf("git", "-C", target.absolutePath, "fetch", "--quiet", "--depth=1", "origin", ref),
+                progress
+            )
+            runGit(
+                listOf("git", "-C", target.absolutePath, "reset", "--hard", "--quiet", "FETCH_HEAD"),
+                progress
+            )
         }
-        // `--` terminates option parsing so url/target can never be interpreted as flags.
-        cmd += listOf("--", url, target.absolutePath)
-        runGit(cmd, progress)
     }
+
+    /** Hex string of 7-40 characters — git's "could be a SHA" heuristic. */
+    private fun looksLikeSha(ref: String): Boolean = ref.matches(SHA_PATTERN)
 
     /**
      * Fetch the configured ref and reset to it. This is the loop that makes branch-based WIP
@@ -108,43 +130,52 @@ class RegistryManager {
      * Run a git command with hardened env and progress-aware cancellation. The args list is
      * passed directly to `ProcessBuilder` (no shell), so there's no shell-injection surface;
      * the `--` separator + InputValidation block git's own flag parsing for user inputs.
+     *
+     * Cleans up reliably: the process's stdout reader is closed via `use {}`, and any
+     * leftover process is destroyed and waited on in the `finally` block so we never leak
+     * child processes or pipe handles even on cancellation or unexpected throws.
      */
     private fun runGit(cmd: List<String>, progress: ProgressIndicator?) {
         val pb = ProcessBuilder(cmd).redirectErrorStream(true)
-        // Restrict transports git will use. Blocks `ext::`, `file://`, etc.
         pb.environment()["GIT_ALLOW_PROTOCOL"] = "https:http:ssh:git"
-        // Treat all URLs/refs as user-supplied so the allowlist above applies.
         pb.environment()["GIT_PROTOCOL_FROM_USER"] = "1"
-        // No interactive credential prompts (would hang headless agents).
         pb.environment()["GIT_TERMINAL_PROMPT"] = "0"
 
         val proc = pb.start()
         val output = StringBuilder()
-        val reader = proc.inputStream.bufferedReader()
-        while (proc.isAlive) {
-            if (progress?.isCanceled == true) {
-                proc.destroyForcibly()
-                throw InterruptedException("Cancelled")
+        try {
+            proc.inputStream.bufferedReader().use { reader ->
+                while (proc.isAlive) {
+                    if (progress?.isCanceled == true) throw InterruptedException("Cancelled")
+                    if (proc.waitFor(200, TimeUnit.MILLISECONDS)) break
+                    while (reader.ready()) output.appendLine(reader.readLine() ?: break)
+                }
+                // Drain whatever's left now that the process has exited (or we're about to kill it).
+                val tail = reader.readText()
+                if (tail.isNotEmpty()) output.append(tail)
             }
-            if (proc.waitFor(200, TimeUnit.MILLISECONDS)) break
-            while (reader.ready()) output.appendLine(reader.readLine() ?: break)
+        } finally {
+            if (proc.isAlive) {
+                proc.destroyForcibly()
+                proc.waitFor() // reap so we don't leave a zombie
+            }
         }
-        // Drain whatever's left.
-        reader.readText().let { if (it.isNotEmpty()) output.append(it) }
         val exit = proc.exitValue()
         if (exit != 0) {
             throw RuntimeException("git exited $exit: ${cmd.joinToString(" ")}\n$output")
         }
     }
 
-    private fun sha256(s: String): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        return md.digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
-    }
-
     companion object {
+        private val SHA_PATTERN = Regex("^[0-9a-fA-F]{7,40}$")
+
         fun getInstance(): RegistryManager =
             com.intellij.openapi.application.ApplicationManager.getApplication()
                 .getService(RegistryManager::class.java)
+    }
+
+    private fun sha256(s: String): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        return md.digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
     }
 }

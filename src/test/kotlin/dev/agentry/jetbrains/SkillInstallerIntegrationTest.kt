@@ -16,10 +16,33 @@ import java.nio.file.Files
  * cache directory by hand. This exercises `localDirFor`, manifest discovery,
  * `resolveSourceDir`, the symlink-safe copy, and the `InstallTarget` path resolver.
  *
+ * Test isolation: `AgentryPaths` derives its cache root from `System.getProperty("user.home")`,
+ * which would normally point at the developer's *real* `~/.agentry/cache` and let a failing
+ * test leak files into their account. We override `user.home` for the duration of each test
+ * to the fixture's temp dir so nothing escapes.
+ *
  * Pure git-clone behaviour is intentionally not covered here; that path is exercised by
  * the manual smoke checklist in CONTRIBUTING.md.
  */
 class SkillInstallerIntegrationTest : BasePlatformTestCase() {
+
+    private var originalUserHome: String? = null
+
+    override fun setUp() {
+        super.setUp()
+        originalUserHome = System.getProperty("user.home")
+        // Send the cache and "agentry skills" roots into a per-test scratch dir.
+        System.setProperty("user.home", myFixture.tempDirFixture.tempDirPath)
+    }
+
+    override fun tearDown() {
+        try {
+            originalUserHome?.let { System.setProperty("user.home", it) }
+                ?: System.clearProperty("user.home")
+        } finally {
+            super.tearDown()
+        }
+    }
 
     fun testInstallCopiesFilesFromCachedRegistry() {
         val registryUrl = "https://example.com/test-registry.git"

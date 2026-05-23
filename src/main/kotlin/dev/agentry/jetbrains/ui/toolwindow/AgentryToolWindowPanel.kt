@@ -1,7 +1,9 @@
 package dev.agentry.jetbrains.ui.toolwindow
 
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DataContext
+import com.intellij.openapi.actionSystem.Presentation
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -12,6 +14,10 @@ import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
+import dev.agentry.jetbrains.AgentryDisposable
+import dev.agentry.jetbrains.actions.AgentryDataKeys
+import dev.agentry.jetbrains.actions.AgentryTopics
+import dev.agentry.jetbrains.actions.SkillsChangedListener
 import dev.agentry.jetbrains.install.SkillInstaller
 import dev.agentry.jetbrains.model.InstallStatus
 import dev.agentry.jetbrains.model.RegistrySource
@@ -28,15 +34,18 @@ import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
 /**
- * The Agentry tool window. All heavy work (git, file IO) runs in `Task.Backgroundable` —
- * the previous version did filesystem IO on the EDT during uninstall, which is now fixed.
+ * The Agentry tool window. Button clicks fire the matching `Agentry.*` actions through
+ * `ActionManager`, threading the selected skill name through the action data context so
+ * there's no duplicate install/remove/refresh logic in this file. When actions complete
+ * they publish on [AgentryTopics.SKILLS_CHANGED]; this panel subscribes to that topic and
+ * re-renders the list — keeping the UI in sync regardless of whether the trigger was a
+ * human click, the menu, or an agent firing the same action via `ActionManager.fireAction`.
  */
 class AgentryToolWindowPanel(private val project: Project) {
 
     private val skillModel = DefaultListModel<SkillEntry>()
     private val skillList = JBList(skillModel).apply {
         cellRenderer = SimpleListCellRenderer.create<SkillEntry>("") { entry ->
-            // Manifest fields come from untrusted registries — escape before embedding in HTML.
             val name = StringUtil.escapeXmlEntities(
                 entry.manifest.displayName.ifBlank { entry.manifest.name }
             )
@@ -63,14 +72,34 @@ class AgentryToolWindowPanel(private val project: Project) {
     private var allEntries: List<SkillEntry> = emptyList()
 
     init {
-        refreshButton.addActionListener { refresh() }
-        installButton.addActionListener { installSelected() }
-        removeButton.addActionListener { removeSelected() }
+        refreshButton.addActionListener {
+            fireAction("Agentry.Refresh", skillName = null)
+        }
+        installButton.addActionListener {
+            val name = skillList.selectedValue?.manifest?.name ?: run {
+                statusLabel.text = "Select a skill to install"; return@addActionListener
+            }
+            fireAction("Agentry.Install", skillName = name)
+        }
+        removeButton.addActionListener {
+            val name = skillList.selectedValue?.manifest?.name ?: run {
+                statusLabel.text = "Select a skill to remove"; return@addActionListener
+            }
+            fireAction("Agentry.Remove", skillName = name)
+        }
         searchField.addDocumentListener(object : DocumentListener {
             override fun insertUpdate(e: DocumentEvent) = filterList()
             override fun removeUpdate(e: DocumentEvent) = filterList()
             override fun changedUpdate(e: DocumentEvent) = filterList()
         })
+
+        // Subscribe to the cross-action "skills changed" topic. Anything that mutates state
+        // — whether the user clicked Install, an agent fired Agentry.Install via the CLI,
+        // or the file watcher synced .agentry/config.yaml — lands a refresh here.
+        project.messageBus.connect(AgentryDisposable.forProject(project))
+            .subscribe(AgentryTopics.SKILLS_CHANGED, SkillsChangedListener { reloadEntries() })
+
+        reloadEntries()
     }
 
     private fun buildPanel(): JPanel {
@@ -89,14 +118,43 @@ class AgentryToolWindowPanel(private val project: Project) {
         return panel
     }
 
-    /** Re-fetch all enabled registries and rebuild the list. */
-    fun refresh() {
+    /**
+     * Fire one of the registered Agentry actions with a data context optionally containing
+     * a pre-selected skill name (so the action skips its dialog prompt). This is the
+     * delegation point — the tool window never inlines install/remove/refresh logic.
+     */
+    private fun fireAction(actionId: String, skillName: String?) {
+        val action = ActionManager.getInstance().getAction(actionId) ?: run {
+            statusLabel.text = "Action '$actionId' not registered"
+            return
+        }
+        val dataContext = DataContext { dataId ->
+            when {
+                skillName != null && dataId == AgentryDataKeys.SKILL_NAME.name -> skillName
+                dataId == com.intellij.openapi.actionSystem.CommonDataKeys.PROJECT.name -> project
+                else -> null
+            }
+        }
+        val event = AnActionEvent.createFromDataContext("AgentryToolWindow", Presentation(), dataContext)
+        ActionManager.getInstance().tryToExecute(action, event.inputEvent, root, "AgentryToolWindow", true)
+        // tryToExecute is async; the SKILLS_CHANGED topic will trigger reloadEntries() on
+        // completion. Update transient status text for immediate feedback.
+        if (skillName != null) statusLabel.text = "Running ${actionId.removePrefix("Agentry.")} on '$skillName'…"
+        else statusLabel.text = "Running ${actionId.removePrefix("Agentry.")}…"
+    }
+
+    /** Re-fetch the latest manifests and refresh the displayed list. */
+    private fun reloadEntries() {
         val settings = AgentrySettings.getInstance()
         val sources = settings.registrySources.map {
             RegistrySource(it.url, it.ref, it.enabled, it.displayName)
         }
         if (sources.none { it.enabled }) {
-            statusLabel.text = "No enabled registries. Add one in Settings | Tools | Agentry."
+            ApplicationManager.getApplication().invokeLater {
+                allEntries = emptyList()
+                filterList()
+                statusLabel.text = "No enabled registries. Add one in Settings | Tools | Agentry."
+            }
             return
         }
         ProgressManager.getInstance().run(
@@ -125,64 +183,5 @@ class AgentryToolWindowPanel(private val project: Project) {
         allEntries
             .filter { q.isBlank() || it.manifest.name.lowercase().contains(q) || it.manifest.description.lowercase().contains(q) }
             .forEach { skillModel.addElement(it) }
-    }
-
-    private fun installSelected() {
-        val entry = skillList.selectedValue ?: run {
-            statusLabel.text = "Select a skill to install"; return
-        }
-        val settings = AgentrySettings.getInstance()
-        ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, "Agentry: installing ${entry.manifest.name}", false) {
-                override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
-                    val result = SkillInstaller.getInstance()
-                        .install(entry.manifest, settings.defaultInstallTarget, project.basePath)
-                    ApplicationManager.getApplication().invokeLater {
-                        if (result.isSuccess) {
-                            statusLabel.text = "Installed '${entry.manifest.name}'"
-                            notify("Skill '${entry.manifest.name}' installed.", NotificationType.INFORMATION)
-                        } else {
-                            statusLabel.text = "Failed to install '${entry.manifest.name}'"
-                            notify(
-                                "Failed to install '${entry.manifest.name}': ${result.exceptionOrNull()?.message}",
-                                NotificationType.ERROR
-                            )
-                        }
-                        refresh()
-                    }
-                }
-            }
-        )
-    }
-
-    private fun removeSelected() {
-        val entry = skillList.selectedValue ?: run {
-            statusLabel.text = "Select a skill to remove"; return
-        }
-        val settings = AgentrySettings.getInstance()
-        // Uninstall does file IO — push it off the EDT.
-        ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, "Agentry: removing ${entry.manifest.name}", false) {
-                override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
-                    val result = SkillInstaller.getInstance()
-                        .uninstall(entry.manifest.name, settings.defaultInstallTarget, project.basePath)
-                    ApplicationManager.getApplication().invokeLater {
-                        statusLabel.text = if (result.isSuccess) {
-                            "Removed '${entry.manifest.name}'"
-                        } else {
-                            "Failed to remove '${entry.manifest.name}'"
-                        }
-                        refresh()
-                    }
-                }
-            }
-        )
-    }
-
-    private fun notify(content: String, type: NotificationType) {
-        NotificationGroupManager.getInstance()
-            .getNotificationGroup("Agentry")
-            .createNotification(content, type)
-            .notify(project)
     }
 }
