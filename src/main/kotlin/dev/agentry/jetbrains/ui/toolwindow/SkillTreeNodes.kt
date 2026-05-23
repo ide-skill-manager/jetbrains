@@ -1,0 +1,57 @@
+package dev.agentry.jetbrains.ui.toolwindow
+
+import com.intellij.ui.CheckedTreeNode
+import dev.agentry.jetbrains.model.InstalledSkill
+import dev.agentry.jetbrains.model.RegistrySource
+import dev.agentry.jetbrains.model.SkillManifest
+import java.io.File
+
+/**
+ * Tree-node hierarchy backing the Agentry tool window. Designed to be extensible — when
+ * commands / subagents become first-class, add a new leaf type and a new header type
+ * without disturbing the registry/skill ones.
+ *
+ * Header nodes (Root, Registry, OrphanGroup) are technically `CheckedTreeNode`s because
+ * IntelliJ's `CheckboxTree` requires every node to be one, but we suppress their
+ * checkbox via `CheckboxTree.isCheckable` so only leaves can actually be ticked.
+ */
+sealed class AgentryNode(userObject: Any?) : CheckedTreeNode(userObject) {
+
+    class Root : AgentryNode(null)
+
+    class Registry(
+        val source: RegistrySource,
+        val status: RegistryStatus,
+        val skillCount: Int
+    ) : AgentryNode(source) {
+        /** Short label shown in the tree row: `"url @ ref"`. */
+        val label: String get() = "${source.displayName.ifBlank { source.url }} @ ${source.ref}"
+    }
+
+    class Skill(
+        val manifest: SkillManifest,
+        var installed: Boolean
+    ) : AgentryNode(manifest) {
+        val name: String get() = manifest.name
+    }
+
+    class OrphanGroup(val count: Int) : AgentryNode("Installed (no registered registry)")
+
+    class Orphan(
+        val installed: InstalledSkill
+    ) : AgentryNode(installed) {
+        val name: String get() = installed.manifest.name
+        val location: File get() = installed.location
+    }
+}
+
+enum class RegistryStatus {
+    /** Source is enabled and successfully fetched. */
+    OK,
+    /** Source is disabled in settings; we may still have cached skills. */
+    DISABLED,
+    /** Fetch failed (network, auth, host). */
+    UNREACHABLE,
+    /** Fetched but yielded no manifests. */
+    EMPTY,
+}

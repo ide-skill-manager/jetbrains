@@ -11,6 +11,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import dev.agentry.jetbrains.install.BatchOperations
 import dev.agentry.jetbrains.install.SkillInstaller
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.RegistrySource
@@ -162,36 +163,45 @@ class RemoveSkillAction : AnAction() {
     }
 }
 
+class InstallSelectedAction : AnAction() {
+    override fun getActionUpdateThread() = ActionUpdateThread.BGT
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        @Suppress("UNCHECKED_CAST")
+        val names = (e.dataContext.getData(SELECTED_SKILLS_DATA_KEY) as? List<String>).orEmpty()
+        if (names.isEmpty()) return
+        BatchOperations.getInstance().installByNames(project, names)
+    }
+}
+
+class UninstallSelectedAction : AnAction() {
+    override fun getActionUpdateThread() = ActionUpdateThread.BGT
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        @Suppress("UNCHECKED_CAST")
+        val names = (e.dataContext.getData(SELECTED_SKILLS_DATA_KEY) as? List<String>).orEmpty()
+        if (names.isEmpty()) return
+        BatchOperations.getInstance().uninstallByNames(project, names)
+    }
+}
+
 class AddRegistryAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.EDT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val url = Messages.showInputDialog(
-            project, "Registry git URL:", "Agentry: add registry", null
-        )?.trim() ?: return
-        if (!InputValidation.isValidRegistryUrl(url)) {
-            Messages.showWarningDialog(
-                project,
-                "URL must use https, http, ssh, or git protocol (or scp-form user@host:path).",
-                "Agentry: invalid URL"
-            )
-            return
-        }
-        val ref = Messages.showInputDialog(
-            project, "Ref (branch / tag / commit; default HEAD):", "Agentry: add registry", null
-        )?.trim()?.ifBlank { "HEAD" } ?: "HEAD"
-        if (ref != "HEAD" && !InputValidation.isValidGitRef(ref)) {
-            Messages.showWarningDialog(
-                project,
-                "Ref must be a valid branch/tag/commit (no spaces, no leading '-').",
-                "Agentry: invalid ref"
-            )
-            return
-        }
+        val dialog = dev.agentry.jetbrains.ui.dialogs.AddRegistryDialog(project)
+        if (!dialog.showAndGet()) return
+        val result = dialog.result ?: return
         val settings = AgentrySettings.getInstance()
         settings.registrySources.add(
-            AgentrySettings.RegistrySourceState(url = url, ref = ref, enabled = true, displayName = url)
+            AgentrySettings.RegistrySourceState(
+                url = result.url,
+                ref = result.ref,
+                enabled = result.enabled,
+                displayName = result.name.ifBlank { result.url }
+            )
         )
+        publishChanged(project)
     }
 }
 

@@ -17,6 +17,12 @@ object InputValidation {
     private val TRANSPORT_HELPER_PREFIX = Regex("^[A-Za-z][A-Za-z0-9_+.\\-]*::")
     /** Matches `scheme://userinfo@…` so we can substitute `***` for the userinfo. */
     private val USERINFO_PATTERN = Regex("^(\\w+://)[^/@\\s]+@")
+    /**
+     * Matches SCP-form URLs that contain a `:password` segment:
+     *   `user:pass@host:path/repo.git` → captures `user:` and the userinfo `pass@`
+     * Leaves credential-less SSH (`git@host:path`) untouched.
+     */
+    private val SCP_USERINFO_PATTERN = Regex("^([^@/:\\s]+:)[^@/\\s]+@(?=[^/\\s]+:)")
 
     /**
      * Skill names become directory names. Reject anything that could escape the install root
@@ -55,12 +61,19 @@ object InputValidation {
 
     /**
      * Strip userinfo from a URL before it lands in logs, on stdout, or in any
-     * in-memory model that's surfaced to humans/agents. Catches the common
-     * `https://token@host/repo.git` and `https://user:pass@host/repo.git` forms.
-     * Idempotent — calling it on an already-redacted URL is a no-op.
+     * in-memory model that's surfaced to humans/agents. Handles:
+     *  - scheme form: `https://token@host/repo.git`, `https://user:pass@host/repo.git`
+     *  - SCP form  : `user:pass@host:path` (note: a plain `git@host:path` is *not* a credential,
+     *    just a username — we leave those alone; only redact when a `:password` is present)
+     * Idempotent: calling on an already-redacted URL is a no-op.
      */
-    fun redactCredentials(url: String): String =
-        url.replace(USERINFO_PATTERN, "$1***@")
+    fun redactCredentials(url: String): String = url
+        .replace(USERINFO_PATTERN, "$1***@")
+        .replace(SCP_USERINFO_PATTERN, "$1***@")
+
+    /** True if the URL has any kind of userinfo (token, password) in it. */
+    fun hasUserInfo(url: String): Boolean =
+        USERINFO_PATTERN.containsMatchIn(url) || SCP_USERINFO_PATTERN.containsMatchIn(url)
 
     /**
      * After resolving a destination, ensure it stays inside [base]. Guards against
