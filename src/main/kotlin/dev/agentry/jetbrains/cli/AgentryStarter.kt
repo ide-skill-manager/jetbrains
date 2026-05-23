@@ -7,6 +7,7 @@ import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.RegistrySource
 import dev.agentry.jetbrains.registry.RegistryManager
 import dev.agentry.jetbrains.settings.AgentrySettings
+import dev.agentry.jetbrains.util.InputValidation
 import kotlin.system.exitProcess
 
 /**
@@ -53,7 +54,11 @@ class AgentryStarter : ApplicationStarter {
     private fun cmdList(): Int {
         val sources = enabledSources()
         val manifests = RegistryManager.getInstance().fetchAll(sources).values.flatten()
-        manifests.forEach { println("${it.name}\t${it.version}\t${it.sourceRegistry}") }
+        // sourceRegistry should already be redacted by RegistryManager.fetchSource, but
+        // run it again defensively so an unredacted path can never leak to stdout.
+        manifests.forEach {
+            println("${it.name}\t${it.version}\t${InputValidation.redactCredentials(it.sourceRegistry)}")
+        }
         return 0
     }
 

@@ -13,6 +13,7 @@ import dev.agentry.jetbrains.install.SkillInstaller
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.registry.RegistryManager
 import dev.agentry.jetbrains.settings.AgentrySettings
+import dev.agentry.jetbrains.util.InputValidation
 
 /**
  * Project-scoped service that reads `.agentry/config.yaml` and installs any declared
@@ -31,10 +32,18 @@ class ProjectSyncService(private val project: Project) {
         if (config.skills.isEmpty() && config.sources.isEmpty()) return 0
 
         val sources = config.toRegistrySources()
-        // Map of `source name` (as declared in config) → resolved registry URL. Used to
-        // honour the `registry` field on each skill dependency so we don't accidentally
-        // install a same-named skill from the wrong source.
-        val urlByName = config.sources.associate { it.name to it.url }
+        // Map of `source name` (as declared in config) → *redacted* registry URL,
+        // built from the validated source set only. Two reasons:
+        //   1. SkillManifest.sourceRegistry is also stored redacted, so the lookup must
+        //      compare apples to apples.
+        //   2. Sources that failed validation in `toRegistrySources` produce no manifests;
+        //      a dep referencing one would silently never match — clearer to leave them
+        //      out of the map so the explicit "unknown registry" path fires instead.
+        val redactedByName = sources.associate { src ->
+            val name = config.sources.firstOrNull { it.url == src.url && it.ref == src.ref }?.name
+                ?: src.url
+            name to InputValidation.redactCredentials(src.url)
+        }
         val settings = AgentrySettings.getInstance()
         val registry = RegistryManager.getInstance()
         val installer = SkillInstaller.getInstance()
@@ -48,17 +57,25 @@ class ProjectSyncService(private val project: Project) {
             val candidates = manifests.filter { it.name == dep.name }
             val manifest = when {
                 dep.registry.isNotBlank() -> {
-                    val url = urlByName[dep.registry]
-                    if (url == null) {
-                        log.warn("Skill '${dep.name}' references unknown registry '${dep.registry}'")
+                    val redactedUrl = redactedByName[dep.registry]
+                    if (redactedUrl == null) {
+                        log.warn(
+                            "Skill '${dep.name}' references unknown (or invalid) registry " +
+                                "'${dep.registry}'"
+                        )
                         return@forEach
                     }
-                    candidates.firstOrNull { it.sourceRegistry == url }
+                    candidates.firstOrNull { it.sourceRegistry == redactedUrl }
                 }
                 candidates.size > 1 -> {
+                    // Use the registry's display name when available, else the redacted URL —
+                    // either way, never the raw URL (avoids leaking embedded credentials).
+                    val pickedDisplay = redactedByName.entries
+                        .firstOrNull { it.value == candidates.first().sourceRegistry }?.key
+                        ?: candidates.first().sourceRegistry
                     log.warn(
                         "Skill '${dep.name}' is offered by ${candidates.size} registries; " +
-                            "pin one via the dep's `registry` field. Picking ${candidates.first().sourceRegistry}."
+                            "pin one via the dep's `registry` field. Picking '$pickedDisplay'."
                     )
                     candidates.first()
                 }

@@ -35,15 +35,17 @@ data class AgentryProjectConfig(
 
     /** Convert YAML sources to runtime [RegistrySource]s, dropping any that fail validation. */
     fun toRegistrySources(): List<RegistrySource> = sources.mapNotNull { src ->
+        // Redact before logging in case the YAML contains URLs with embedded credentials.
+        val safeUrl = InputValidation.redactCredentials(src.url)
         if (!InputValidation.isValidRegistryUrl(src.url)) {
-            log.warn("Skipping registry with invalid URL in .agentry/config.yaml: '${src.url}'")
+            log.warn("Skipping registry with invalid URL in .agentry/config.yaml: '$safeUrl'")
             return@mapNotNull null
         }
         if (src.ref != "HEAD" && !InputValidation.isValidGitRef(src.ref)) {
-            log.warn("Skipping registry '${src.url}' with invalid ref: '${src.ref}'")
+            log.warn("Skipping registry '$safeUrl' with invalid ref: '${src.ref}'")
             return@mapNotNull null
         }
-        RegistrySource(url = src.url, ref = src.ref, displayName = src.name.ifBlank { src.url })
+        RegistrySource(url = src.url, ref = src.ref, displayName = src.name.ifBlank { safeUrl })
     }
 
     companion object {

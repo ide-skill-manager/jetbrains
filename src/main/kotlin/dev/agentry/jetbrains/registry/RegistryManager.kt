@@ -39,7 +39,7 @@ class RegistryManager {
 
     /** Fetch a single source. Returns empty list on validation or git failure. */
     fun fetchSource(source: RegistrySource, progress: ProgressIndicator? = null): List<SkillManifest> {
-        val safeUrl = redactCredentials(source.url)
+        val safeUrl = InputValidation.redactCredentials(source.url)
         if (!InputValidation.isValidRegistryUrl(source.url)) {
             log.warn("Rejecting registry with invalid URL: '$safeUrl'")
             return emptyList()
@@ -52,7 +52,9 @@ class RegistryManager {
             val localDir = localDirFor(source)
             if (localDir.exists()) pull(localDir, source.ref, progress)
             else clone(source.url, localDir, source.ref, progress)
-            parser.scanDirectory(localDir, source.url, source.ref)
+            // Manifests store the *redacted* URL so embedded credentials never propagate
+            // into in-memory models, CLI stdout, or downstream logs.
+            parser.scanDirectory(localDir, safeUrl, source.ref)
         }.onFailure { e ->
             // Don't log the raw exception message — it carries the full git command
             // (which contains the URL) and any captured stderr. Both can leak secrets.
@@ -64,17 +66,25 @@ class RegistryManager {
     /** Read previously-fetched skills without network IO. */
     fun getCached(source: RegistrySource): List<SkillManifest> {
         val dir = localDirFor(source)
-        return if (dir.exists()) parser.scanDirectory(dir, source.url, source.ref) else emptyList()
+        val safeUrl = InputValidation.redactCredentials(source.url)
+        return if (dir.exists()) parser.scanDirectory(dir, safeUrl, source.ref) else emptyList()
     }
 
     /**
      * Cache directory for [source]. The key includes both URL and ref so that the same
      * repository registered at two different refs (e.g. `main` and `feature/wip`) gets
      * two separate working copies and never overwrites itself.
+     *
+     * The hash is computed over the *redacted* URL so two RegistrySource instances that
+     * differ only in embedded credentials map to the same cache dir (they're the same
+     * registry from a content standpoint), AND the on-disk path never contains the token.
+     * This also keeps the hash stable when manifest-side lookups reconstruct a
+     * `RegistrySource` from the already-redacted `SkillManifest.sourceRegistry`.
      */
     fun localDirFor(source: RegistrySource): File {
-        val hash = sha256("${source.url}@${source.ref}").take(16)
-        val readable = source.url.substringAfterLast('/').removeSuffix(".git")
+        val safe = InputValidation.redactCredentials(source.url)
+        val hash = sha256("${safe}@${source.ref}").take(16)
+        val readable = safe.substringAfterLast('/').removeSuffix(".git")
             .replace(Regex("[^A-Za-z0-9_\\-]"), "_")
             .take(40)
         return File(AgentryPaths.registryCacheRoot, "$hash-$readable")
@@ -181,14 +191,5 @@ class RegistryManager {
     private fun sha256(s: String): String {
         val md = MessageDigest.getInstance("SHA-256")
         return md.digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
-    }
-
-    /**
-     * Strip embedded credentials from a URL before it hits `idea.log`. Catches the common
-     * `https://token@host/repo.git` and `https://user:pass@host/repo.git` forms.
-     */
-    private fun redactCredentials(url: String): String {
-        // Matches scheme://userinfo@rest and replaces the userinfo with `***`.
-        return url.replace(Regex("^(\\w+://)[^/@\\s]+@"), "$1***@")
     }
 }

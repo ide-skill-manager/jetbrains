@@ -1,6 +1,7 @@
 package dev.agentry.jetbrains
 
 import dev.agentry.jetbrains.util.InputValidation
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -77,12 +78,53 @@ class InputValidationTest {
         ).forEach { assertTrue(it, InputValidation.isValidRegistryUrl(it)) }
     }
 
+    @Test fun `accepts IPv6 host URLs`() {
+        // The earlier blanket "::" check rejected these — legitimate IPv6 hosts.
+        listOf(
+            "https://[2001:db8::1]/org/repo.git",
+            "ssh://[::1]/org/repo.git",
+            "http://[fe80::1]/repo"
+        ).forEach { assertTrue(it, InputValidation.isValidRegistryUrl(it)) }
+    }
+
     @Test fun `rejects ext transport (git RCE vector)`() {
         listOf(
             "ext::sh -c id",
             "ext::/tmp/payload",
-            "anything::evil"
+            "anything::evil",
+            "transport-helper::payload"
         ).forEach { assertFalse(it, InputValidation.isValidRegistryUrl(it)) }
+    }
+
+    // --- redactCredentials -----------------------------------------------------------
+
+    @Test fun `redactCredentials strips userinfo from common URL shapes`() {
+        assertEquals(
+            "https://***@github.com/org/repo.git",
+            InputValidation.redactCredentials("https://ghp_abc123@github.com/org/repo.git")
+        )
+        assertEquals(
+            "https://***@example.com/repo",
+            InputValidation.redactCredentials("https://user:password@example.com/repo")
+        )
+        assertEquals(
+            "ssh://***@host/repo.git",
+            InputValidation.redactCredentials("ssh://git@host/repo.git")
+        )
+    }
+
+    @Test fun `redactCredentials is a no-op when no userinfo present`() {
+        listOf(
+            "https://github.com/org/repo.git",
+            "git@github.com:org/repo.git",   // scp-form has @ but no scheme://
+            "git://example.com/repo.git"
+        ).forEach { assertEquals(it, it, InputValidation.redactCredentials(it)) }
+    }
+
+    @Test fun `redactCredentials is idempotent`() {
+        val once = InputValidation.redactCredentials("https://token@host/repo.git")
+        val twice = InputValidation.redactCredentials(once)
+        assertEquals(once, twice)
     }
 
     @Test fun `rejects file scheme and bare paths`() {
