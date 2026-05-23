@@ -176,7 +176,12 @@ class RegistryManager {
         }
         val exit = proc.exitValue()
         if (exit != 0) {
-            throw RuntimeException("git exited $exit: ${cmd.joinToString(" ")}\n$output")
+            // Redact userinfo from both the rebuilt command line and the captured output
+            // before they land in any exception, log, or downstream consumer. The command
+            // we actually ran still used the raw URL via ProcessBuilder argv.
+            val safeCmd = cmd.joinToString(" ") { InputValidation.redactCredentials(it) }
+            val safeOutput = InputValidation.redactCredentials(output.toString())
+            throw RuntimeException("git exited $exit: $safeCmd\n$safeOutput")
         }
     }
 

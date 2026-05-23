@@ -7,6 +7,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
+import com.intellij.openapi.util.io.FileUtil
 import com.intellij.openapi.vfs.AsyncFileListener
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
@@ -70,9 +71,12 @@ class AgentryStartupActivity : ProjectActivity {
 
     private fun registerConfigWatcher(project: Project) {
         val basePath = project.basePath ?: return
-        val configPath = "$basePath/${AgentryProjectConfig.CONFIG_PATH}"
+        // VFS event paths are always system-independent (forward slashes) regardless of
+        // platform; `project.basePath` on Windows can be `C:\…`. Normalise both sides so
+        // the equality check actually fires on Windows.
+        val configPath = FileUtil.toSystemIndependentName("$basePath/${AgentryProjectConfig.CONFIG_PATH}")
         val listener = AsyncFileListener { events: List<VFileEvent> ->
-            val touched = events.any { it.path == configPath }
+            val touched = events.any { FileUtil.toSystemIndependentName(it.path) == configPath }
             if (!touched) null
             else object : AsyncFileListener.ChangeApplier {
                 override fun afterVfsChange() {
