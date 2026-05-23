@@ -74,6 +74,14 @@
                     class="dev.agentry.jetbrains.actions.AddRegistryAction"
                     text="Add Registry…"
                     description="Add a git URL as a skill registry"/>
+            <action id="Agentry.InstallSelected"
+                    class="dev.agentry.jetbrains.actions.InstallSelectedAction"
+                    text="Install Selected Skills"
+                    description="Install all checked skills in the Agentry tool window"/>
+            <action id="Agentry.UninstallSelected"
+                    class="dev.agentry.jetbrains.actions.UninstallSelectedAction"
+                    text="Uninstall Selected Skills"
+                    description="Uninstall all checked skills in the Agentry tool window"/>
         </group>
     </actions>
 </idea-plugin>

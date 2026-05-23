@@ -17,6 +17,13 @@ import com.intellij.util.messages.Topic
  */
 const val SKILL_NAME_DATA_KEY: String = "AgentrySkillName"
 
+/**
+ * A `List<String>` of skill names the user has selected in the tool window. Read by
+ * `InstallSelectedAction` / `UninstallSelectedAction` so batch operations can be driven
+ * from the same DataContext pattern as the single-skill actions.
+ */
+const val SELECTED_SKILLS_DATA_KEY: String = "AgentrySelectedSkills"
+
 fun interface SkillsChangedListener {
     fun skillsChanged()
 }
