@@ -58,6 +58,12 @@ class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null)) {
         .filter { it.isChecked }
         .toList()
 
+    /** Components (skill/command/agent/hook/mcp inside a plugin) the user has ticked. */
+    fun selectedComponents(): List<AgentryNode.Component> = allLeaves()
+        .filterIsInstance<AgentryNode.Component>()
+        .filter { it.isChecked }
+        .toList()
+
     // --- Helpers ---------------------------------------------------------------------
 
     private fun allLeaves(): Sequence<AgentryNode> = sequence {
@@ -66,8 +72,8 @@ class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null)) {
         stack.addLast(root)
         while (stack.isNotEmpty()) {
             val node = stack.removeLast()
-            if (node is AgentryNode && (node is AgentryNode.Skill || node is AgentryNode.Orphan)) {
-                yield(node)
+            if (node is AgentryNode.Skill || node is AgentryNode.Orphan || node is AgentryNode.Component) {
+                yield(node as AgentryNode)
             }
             for (i in 0 until node.childCount) stack.addLast(node.getChildAt(i))
         }
@@ -79,8 +85,12 @@ class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null)) {
         stack.addLast(root)
         while (stack.isNotEmpty()) {
             val node = stack.removeLast()
-            if (node is AgentryNode.Skill && node.isChecked) out += node.name
-            if (node is AgentryNode.Orphan && node.isChecked) out += node.name
+            when (node) {
+                is AgentryNode.Skill -> if (node.isChecked) out += node.name
+                is AgentryNode.Orphan -> if (node.isChecked) out += node.name
+                is AgentryNode.Component -> if (node.isChecked) out += componentKey(node)
+                else -> {}
+            }
             for (i in 0 until node.childCount) stack.addLast(node.getChildAt(i))
         }
         return out
@@ -95,11 +105,15 @@ class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null)) {
             when (node) {
                 is AgentryNode.Skill -> if (node.name in previouslyChecked) node.isChecked = true
                 is AgentryNode.Orphan -> if (node.name in previouslyChecked) node.isChecked = true
+                is AgentryNode.Component -> if (componentKey(node) in previouslyChecked) node.isChecked = true
                 else -> {}
             }
             for (i in 0 until node.childCount) stack.addLast(node.getChildAt(i))
         }
     }
+
+    /** Component identity for check-state preservation: kind + name disambiguates same-named components. */
+    private fun componentKey(node: AgentryNode.Component): String = "${node.kind.name}:${node.name}"
 
     /**
      * Expand registry rows in O(n) via path-based expansion. If [previouslyExpanded] is
@@ -117,6 +131,29 @@ class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null)) {
             }
             if (child is AgentryNode.OrphanGroup) {
                 expandPath(javax.swing.tree.TreePath(arrayOf<Any>(root, child)))
+            }
+        }
+        // Auto-expand every plugin / component group so the user sees the leaves.
+        expandAllDescendants(root)
+    }
+
+    private fun expandAllDescendants(root: AgentryNode.Root) {
+        // Walk the tree and expand every interior node so checkable leaves are visible.
+        val stack = ArrayDeque<javax.swing.tree.TreePath>()
+        for (i in 0 until root.childCount) {
+            stack.addLast(javax.swing.tree.TreePath(arrayOf<Any>(root, root.getChildAt(i))))
+        }
+        while (stack.isNotEmpty()) {
+            val path = stack.removeLast()
+            val node = path.lastPathComponent
+            if (node is AgentryNode.Plugin || node is AgentryNode.ComponentGroup) {
+                expandPath(path)
+            }
+            if (node is TreeNode) {
+                for (j in 0 until node.childCount) {
+                    val childPath = path.pathByAddingChild(node.getChildAt(j))
+                    stack.addLast(childPath)
+                }
             }
         }
     }
@@ -160,20 +197,75 @@ private class SkillTreeRenderer : CheckboxTree.CheckboxTreeCellRenderer(/*opaque
         hasFocus: Boolean
     ) {
         val node = value as? AgentryNode ?: return
-        // Suppress the checkbox column on header/grouping rows. Only Skill and Orphan are
-        // checkable leaves; everything else (Root, Registry header, OrphanGroup header)
-        // gets its checkbox hidden so the row looks like a header, not a togglable item.
-        val isCheckableLeaf = node is AgentryNode.Skill || node is AgentryNode.Orphan
+        // Suppress the checkbox column on header/grouping rows. Only individual leaves
+        // (Skill / Component / Orphan) are checkable; Registry / Plugin / ComponentGroup
+        // headers and the Root are non-checkable structural rows.
+        val isCheckableLeaf = node is AgentryNode.Skill ||
+            node is AgentryNode.Orphan ||
+            node is AgentryNode.Component
         checkbox.isVisible = isCheckableLeaf
 
         textRenderer.clear()
         when (node) {
             is AgentryNode.Root -> { /* hidden */ }
             is AgentryNode.Registry -> renderRegistry(node)
+            is AgentryNode.Plugin -> renderPlugin(node)
+            is AgentryNode.ComponentGroup -> renderComponentGroup(node)
+            is AgentryNode.Component -> renderComponent(node)
             is AgentryNode.Skill -> renderSkill(node)
             is AgentryNode.OrphanGroup -> renderOrphanGroup(node)
             is AgentryNode.Orphan -> renderOrphan(node)
         }
+    }
+
+    private fun renderPlugin(node: AgentryNode.Plugin) {
+        textRenderer.append(node.label, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+        textRenderer.append("   (${node.componentCount} ${pluralize("component", node.componentCount)})", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+    }
+
+    private fun renderComponentGroup(node: AgentryNode.ComponentGroup) {
+        val label = when (node.kind) {
+            dev.agentry.jetbrains.model.ComponentKind.SKILL -> "Skills"
+            dev.agentry.jetbrains.model.ComponentKind.COMMAND -> "Commands"
+            dev.agentry.jetbrains.model.ComponentKind.AGENT -> "Agents"
+            dev.agentry.jetbrains.model.ComponentKind.HOOK -> "Hooks"
+            dev.agentry.jetbrains.model.ComponentKind.MCP_SERVER -> "MCP servers"
+        }
+        textRenderer.append("$label  ", SimpleTextAttributes.REGULAR_ATTRIBUTES)
+        textRenderer.append("(${node.count})", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+    }
+
+    private fun renderComponent(node: AgentryNode.Component) {
+        textRenderer.append(node.name, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+        val desc = describeComponent(node.component)
+        if (desc.isNotBlank()) {
+            textRenderer.append("  $desc", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+        }
+        if (node.installed) {
+            textRenderer.append(
+                "  installed",
+                SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, successFg())
+            )
+        }
+        if (node.kind == dev.agentry.jetbrains.model.ComponentKind.AGENT) {
+            textRenderer.append(
+                "  unsupported on JetBrains",
+                SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, JBColor.ORANGE)
+            )
+        }
+    }
+
+    private fun describeComponent(c: dev.agentry.jetbrains.model.PluginComponent): String = when (c) {
+        is dev.agentry.jetbrains.model.PluginComponent.Skill ->
+            c.skillFile.parentFile.name.let { "" }
+        is dev.agentry.jetbrains.model.PluginComponent.Command ->
+            c.description.orEmpty()
+        is dev.agentry.jetbrains.model.PluginComponent.Agent ->
+            c.description.orEmpty()
+        is dev.agentry.jetbrains.model.PluginComponent.Hook ->
+            "${c.scripts.size} script(s)"
+        is dev.agentry.jetbrains.model.PluginComponent.McpServer ->
+            "${c.bundledFiles.size} bundled file(s)"
     }
 
     private fun renderRegistry(node: AgentryNode.Registry) {

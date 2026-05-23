@@ -15,6 +15,8 @@ object InputValidation {
     private val SSH_SCP_FORM = Regex("^[A-Za-z0-9_.\\-]+@[A-Za-z0-9_.\\-]+:[A-Za-z0-9_./\\-]+$")
     /** `ext::…`, `transport-helper::…` — anchored to the *start* of the URL only. */
     private val TRANSPORT_HELPER_PREFIX = Regex("^[A-Za-z][A-Za-z0-9_+.\\-]*::")
+    /** GitHub `owner/name` slug for `{ "source": "github", "repo": "…" }` shapes. */
+    private val GITHUB_REPO = Regex("^[A-Za-z0-9][A-Za-z0-9._\\-]{0,38}/[A-Za-z0-9._\\-]{1,100}$")
     /** Matches `scheme://userinfo@…` so we can substitute `***` for the userinfo. */
     private val USERINFO_PATTERN = Regex("^(\\w+://)[^/@\\s]+@")
     /**
@@ -74,6 +76,22 @@ object InputValidation {
     /** True if the URL has any kind of userinfo (token, password) in it. */
     fun hasUserInfo(url: String): Boolean =
         USERINFO_PATTERN.containsMatchIn(url) || SCP_USERINFO_PATTERN.containsMatchIn(url)
+
+    /**
+     * A GitHub `owner/name` slug — `[A-Za-z0-9][A-Za-z0-9._-]{0,38}/[A-Za-z0-9._-]{1,100}`.
+     * No `..`, no whitespace, no `/` in either segment. Used to gate plugin sources of
+     * shape `{ "source": "github", "repo": "..." }` before the repo string lands in a URL.
+     */
+    fun isValidGithubRepo(repo: String?): Boolean =
+        !repo.isNullOrBlank() && GITHUB_REPO.matches(repo)
+
+    /**
+     * Stricter validator for *plugin* and *component* names — same shape as skill names
+     * but lifted out so the security boundary is explicit at every component installer.
+     * (`PluginComponent.name` comes from frontmatter / filenames, which are attacker-
+     * controllable; we treat it identically to skill names.)
+     */
+    fun isValidComponentName(name: String?): Boolean = isValidSkillName(name)
 
     /**
      * After resolving a destination, ensure it stays inside [base]. Guards against
