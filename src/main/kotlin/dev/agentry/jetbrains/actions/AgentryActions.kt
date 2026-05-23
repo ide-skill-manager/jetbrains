@@ -15,6 +15,7 @@ import dev.agentry.jetbrains.model.RegistrySource
 import dev.agentry.jetbrains.registry.RegistryManager
 import dev.agentry.jetbrains.settings.AgentrySettings
 import dev.agentry.jetbrains.sync.ProjectSyncService
+import dev.agentry.jetbrains.util.InputValidation
 
 /**
  * Discoverable, scriptable actions for every operation the tool window exposes.
@@ -112,9 +113,25 @@ class AddRegistryAction : AnAction() {
         val url = Messages.showInputDialog(
             project, "Registry git URL:", "Agentry: add registry", null
         )?.trim() ?: return
+        if (!InputValidation.isValidRegistryUrl(url)) {
+            Messages.showWarningDialog(
+                project,
+                "URL must use https, http, ssh, or git protocol (or scp-form user@host:path).",
+                "Agentry: invalid URL"
+            )
+            return
+        }
         val ref = Messages.showInputDialog(
             project, "Ref (branch / tag / commit; default HEAD):", "Agentry: add registry", null
         )?.trim()?.ifBlank { "HEAD" } ?: "HEAD"
+        if (ref != "HEAD" && !InputValidation.isValidGitRef(ref)) {
+            Messages.showWarningDialog(
+                project,
+                "Ref must be a valid branch/tag/commit (no spaces, no leading '-').",
+                "Agentry: invalid ref"
+            )
+            return
+        }
         val settings = AgentrySettings.getInstance()
         settings.registrySources.add(
             AgentrySettings.RegistrySourceState(url = url, ref = ref, enabled = true, displayName = url)

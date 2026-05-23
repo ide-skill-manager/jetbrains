@@ -130,6 +130,7 @@ class AgentrySettingsPanel {
 
     fun loadSettings(settings: AgentrySettings) {
         registryModel.clear()
+        // `data class` already provides a member `copy()` — use it directly.
         settings.registrySources.forEach { registryModel.addElement(it.copy()) }
         defaultTargetCombo.selectedItem = settings.defaultInstallTarget
         autoSyncCheck.isSelected = settings.autoSyncOnOpen
@@ -150,7 +151,3 @@ class AgentrySettingsPanel {
             || autoSyncCheck.isSelected != settings.autoSyncOnOpen
     }
 }
-
-private fun AgentrySettings.RegistrySourceState.copy() = AgentrySettings.RegistrySourceState(
-    url = url, ref = ref, enabled = enabled, displayName = displayName
-)

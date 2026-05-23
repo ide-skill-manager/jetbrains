@@ -6,6 +6,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.SearchTextField
 import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
@@ -35,14 +36,19 @@ class AgentryToolWindowPanel(private val project: Project) {
     private val skillModel = DefaultListModel<SkillEntry>()
     private val skillList = JBList(skillModel).apply {
         cellRenderer = SimpleListCellRenderer.create<SkillEntry>("") { entry ->
-            val name = entry.manifest.displayName.ifBlank { entry.manifest.name }
+            // Manifest fields come from untrusted registries — escape before embedding in HTML.
+            val name = StringUtil.escapeXmlEntities(
+                entry.manifest.displayName.ifBlank { entry.manifest.name }
+            )
+            val version = StringUtil.escapeXmlEntities(entry.manifest.version)
+            val description = StringUtil.escapeXmlEntities(entry.manifest.description.take(120))
             val status = when (entry.status) {
                 InstallStatus.INSTALLED -> "✓ installed"
                 InstallStatus.ERROR -> "⚠ error"
                 else -> ""
             }
-            "<html><b>$name</b> <small>v${entry.manifest.version}</small>" +
-                "<br/><small>${entry.manifest.description.take(120)}</small>" +
+            "<html><b>$name</b> <small>v$version</small>" +
+                "<br/><small>$description</small>" +
                 "<br/><small style='color:#888'>$status</small></html>"
         }
     }

@@ -48,7 +48,6 @@
         <postStartupActivity implementation="dev.agentry.jetbrains.AgentryStartupActivity"/>
 
         <!-- Headless / CLI entry point: `idea agentry ...` -->
-        <applicationService serviceImplementation="dev.agentry.jetbrains.cli.AgentryStarter"/>
         <appStarter implementation="dev.agentry.jetbrains.cli.AgentryStarter"/>
     </extensions>
 

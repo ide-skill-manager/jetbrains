@@ -60,21 +60,7 @@ class SkillInstallerTest {
         assertFalse(InstallTarget.AGENTRY_CACHE.baseDir(null) == null)
     }
 
-    /**
-     * A symlinked file in a skill source must be refused by the copy step (otherwise
-     * `~/.ssh/id_rsa` could be exfiltrated). The behaviour is enforced inside
-     * `SkillInstaller.copySkill`; we exercise it here by invoking the same primitive via
-     * reflection-free private duplication of the rules.
-     */
-    @Test
-    fun `Files walk refuses to follow symlinks (smoke test for copy guard)`() {
-        // On systems without symlink permission this is a no-op; we just confirm the call
-        // doesn't dereference. Real installer coverage lives in integration tests.
-        val src = tmpDir.newFolder("source")
-        val secret = tmpDir.newFile("secret").apply { writeText("PRIVATE") }
-        val linked = File(src, "link")
-        runCatching { Files.createSymbolicLink(linked.toPath(), secret.toPath()) }
-            .onFailure { return } // skip on filesystems that disallow symlinks
-        assertTrue(Files.isSymbolicLink(linked.toPath()))
-    }
+    // End-to-end "symlinks in a skill source are refused by copySkill" coverage lives in
+    // [SkillInstallerIntegrationTest.testInstallRefusesSymlinkInSource], which runs against
+    // the real application services. No need for a misleading pure-JUnit shim here.
 }

@@ -34,7 +34,14 @@ class SkillInstaller {
     private val log = logger<SkillInstaller>()
     private val parser = ManifestParser()
 
-    /** Install a skill. Returns the install directory on success. */
+    /**
+     * Install a skill. Returns the install directory on success.
+     *
+     * Atomically replaces any existing install: copies into a sibling temp directory and
+     * then renames into place. This guarantees that updating a skill never leaves orphaned
+     * files from the previous version on disk, and that a failed copy can't half-overwrite
+     * the existing install.
+     */
     fun install(
         manifest: SkillManifest,
         target: InstallTarget,
@@ -46,7 +53,23 @@ class SkillInstaller {
         val dest = target.resolvePath(projectBasePath, manifest.name)
         val sourceDir = resolveSourceDir(manifest)
             ?: error("Cannot locate source directory for skill '${manifest.name}' from '${manifest.sourceRegistry}'")
-        copySkill(sourceDir, dest)
+
+        val parent = dest.parentFile ?: error("Install target has no parent: $dest")
+        Files.createDirectories(parent.toPath())
+        val staging = File(parent, ".${dest.name}.installing-${System.nanoTime()}")
+        try {
+            copySkill(sourceDir, staging)
+            // Swap: remove the old install, then rename the staging dir into place.
+            if (dest.exists()) dest.deleteRecursively()
+            if (!staging.renameTo(dest)) {
+                // Fall back to recursive copy for cross-filesystem cases.
+                staging.copyRecursively(dest, overwrite = true)
+                staging.deleteRecursively()
+            }
+        } catch (e: Throwable) {
+            staging.deleteRecursively()
+            throw e
+        }
         refreshVfs(dest)
         log.info("Installed skill '${manifest.name}' to ${dest.absolutePath}")
         dest
