@@ -135,17 +135,23 @@ private fun uninstallComponents(
             )
             return@forEach
         }
-        val dest = InstallPaths.destFor(c, plugin, scope)
+        // Remove every destination the install would have written to — for dual-writing
+        // installers (Agent) that's two files; otherwise it's one. A symlink at any dest
+        // aborts the whole component to avoid following the link outside the install root.
+        val destinations = InstallPaths.destinationsFor(c, plugin, scope)
         runCatching {
-            val destPath = dest.toPath()
-            if (!Files.exists(destPath, LinkOption.NOFOLLOW_LINKS)) return@runCatching
-            if (Files.isSymbolicLink(destPath)) {
-                // Refuse — don't follow a symlink that may point outside the install root.
-                throw SecurityException("Refusing to delete symlinked install destination: $dest")
+            destinations.forEach { dest ->
+                val destPath = dest.toPath()
+                if (!Files.exists(destPath, LinkOption.NOFOLLOW_LINKS)) return@forEach
+                if (Files.isSymbolicLink(destPath)) {
+                    throw SecurityException("Refusing to delete symlinked install destination: $dest")
+                }
+                if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
             }
-            if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
         }.onSuccess {
-            installed += dev.agentry.jetbrains.install.InstalledComponent(c.kind, c.name, dest, scope)
+            installed += dev.agentry.jetbrains.install.InstalledComponent(
+                c.kind, c.name, destinations.first(), scope
+            )
         }.onFailure { e ->
             failed += dev.agentry.jetbrains.install.ComponentError(
                 c.kind, c.name, e.message ?: "unknown", recoverable = e is SecurityException

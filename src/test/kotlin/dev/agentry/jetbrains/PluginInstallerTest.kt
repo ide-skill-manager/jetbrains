@@ -113,7 +113,7 @@ class PluginInstallerTest : BasePlatformTestCase() {
         assertTrue(cfg.contains(destDir.canonicalPath))
     }
 
-    fun testAgentInstallLandsAtGithubAgentsPath() {
+    fun testAgentInstallDualWritesGithubAndClaudePaths() {
         val (root, projectDir) = newPluginAndProject("agent-plugin")
         File(root, "agents").mkdirs()
         File(root, "agents/foo.agent.md").writeText(
@@ -129,14 +129,17 @@ class PluginInstallerTest : BasePlatformTestCase() {
         )
         val report = PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
         assertTrue("expected full success, got: ${report.failed}", report.isFullSuccess)
-        val dest = File(projectDir, ".github/agents/foo.agent.md")
-        assertTrue("file landed at canonical path", dest.exists())
-        val written = dest.readText()
-        // We always single-quote scalars per the awesome-copilot style guide.
+        // Dual-write: BOTH paths exist so the agent reaches every tool in the ecosystem.
+        val githubDest = File(projectDir, ".github/agents/foo.agent.md")
+        val claudeDest = File(projectDir, ".claude/agents/foo.agent.md")
+        assertTrue("`.github/agents/` write landed", githubDest.exists())
+        assertTrue("`.claude/agents/` write landed", claudeDest.exists())
+        // Both files have identical normalised content (we rewrite once, copy twice).
+        assertEquals("dual-write content matches", githubDest.readText(), claudeDest.readText())
+        val written = githubDest.readText()
         assertTrue("name preserved (quoted)", written.contains("name: 'foo'"))
         assertTrue("description preserved (quoted)", written.contains("description: 'Reviews diffs'"))
         assertTrue("body preserved", written.contains("Body"))
-        // Other frontmatter passes through untouched.
         assertTrue("other frontmatter passed through", written.contains("model: claude-3-5-sonnet"))
     }
 
@@ -150,8 +153,58 @@ class PluginInstallerTest : BasePlatformTestCase() {
         val report = PluginInstaller().installPlugin(manifest(root, "agent-no-desc"), components, InstallScope.Project(projectDir))
         assertTrue(report.isFullSuccess)
         val written = File(projectDir, ".github/agents/quiet.agent.md").readText()
-        // Backfill picks the first non-empty paragraph (trimmed to 120 chars).
-        assertTrue("backfilled description", written.contains("description: ") && written.contains("First paragraph"))
+        // First-paragraph only — broken "concat all paragraphs" impl would emit both.
+        assertTrue(
+            "expected first-paragraph-only description, got: $written",
+            written.contains("description: 'First paragraph of the body.'")
+        )
+        assertFalse(
+            "description must not include the second paragraph",
+            written.lineSequence().any { it.startsWith("description:") && it.contains("Second paragraph") }
+        )
+    }
+
+    fun testAgentInstallGlobalScopeNamespacesByPluginAndDualWrites() {
+        val (root, _) = newPluginAndProject("ns-plugin")
+        File(root, "agents").mkdirs()
+        File(root, "agents/shared.agent.md").writeText("---\nname: shared\ndescription: 'x'\n---\n")
+        val components = listOf(
+            PluginComponent.Agent("shared", File(root, "agents/shared.agent.md"), description = "x")
+        )
+        val report = PluginInstaller().installPlugin(manifest(root, "ns-plugin"), components, InstallScope.Global)
+        assertTrue("global install succeeded: ${report.failed}", report.isFullSuccess)
+        // user.home is overridden to the fixture temp dir in setUp(). Both global locations
+        // get the <plugin>__<name>.agent.md namespaced filename so two tools / plugins
+        // shipping a same-named agent can't overwrite each other.
+        val home = myFixture.tempDirFixture.tempDirPath
+        assertTrue(
+            "expected ~/.copilot/agents/ns-plugin__shared.agent.md",
+            File(home, ".copilot/agents/ns-plugin__shared.agent.md").exists()
+        )
+        assertTrue(
+            "expected ~/.claude/agents/ns-plugin__shared.agent.md",
+            File(home, ".claude/agents/ns-plugin__shared.agent.md").exists()
+        )
+    }
+
+    fun testAgentInstallRefusesSymlinkedSource() {
+        val (root, projectDir) = newPluginAndProject("sym-agent")
+        File(root, "agents").mkdirs()
+        val secret = File(myFixture.tempDirFixture.tempDirPath, "secret").apply { writeText("S3CRET") }
+        val link = File(root, "agents/leak.agent.md")
+        try {
+            java.nio.file.Files.createSymbolicLink(link.toPath(), secret.toPath())
+        } catch (_: Throwable) {
+            return // FS doesn't allow symlinks; skip
+        }
+        val components = listOf(
+            PluginComponent.Agent("leak", link, description = "x")
+        )
+        val report = PluginInstaller().installPlugin(manifest(root, "sym-agent"), components, InstallScope.Project(projectDir))
+        assertTrue("symlinked agent source must fail", report.isFullFailure)
+        // Neither dual-write destination should be created.
+        assertFalse(File(projectDir, ".github/agents/leak.agent.md").exists())
+        assertFalse(File(projectDir, ".claude/agents/leak.agent.md").exists())
     }
 
     fun testMixedSuccessAndFailureProducesPartialReport() {

@@ -12,16 +12,22 @@ import java.io.File
 import java.nio.file.Files
 
 /**
- * Installs a [PluginComponent.Agent] as a Copilot **custom chat agent**.
+ * Installs a [PluginComponent.Agent] as a Copilot **custom chat agent**, dual-writing to
+ * the paths each tool in the ecosystem reads:
  *
- * Target paths (per [GitHub Docs](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/cloud-agent/create-custom-agents-in-your-ide)
- * and [VS Code custom-agents docs](https://code.visualstudio.com/docs/copilot/customization/custom-agents)):
+ *   Project:
+ *     - `<project>/.github/agents/<name>.agent.md`  — Copilot for JetBrains, VS Code Copilot,
+ *       Copilot CLI, Copilot cloud agent. Source:
+ *       [VS Code custom-agents docs](https://code.visualstudio.com/docs/copilot/customization/custom-agents).
+ *     - `<project>/.claude/agents/<name>.agent.md`  — Claude Code; also a documented
+ *       pickup path for Copilot for JetBrains per the
+ *       [Copilot for JetBrains wiki](https://github.com/microsoft/copilot-intellij-feedback/wiki/Agent-Configuration-and-Extensibility).
  *
- *   - Project: `<project>/.github/agents/<name>.agent.md`         — auto-discovered by Copilot for JetBrains
- *   - Global : `~/.copilot/agents/<plugin>__<name>.agent.md`      — same dir VS Code Copilot uses;
- *     namespaced by plugin id so two tools can't silently overwrite each other's same-named agents.
- *     The `name:` frontmatter still carries the bare agent name so the Customizations panel shows
- *     the right label.
+ *   Global:
+ *     - `~/.copilot/agents/<plugin>__<name>.agent.md`
+ *     - `~/.claude/agents/<plugin>__<name>.agent.md`
+ *     Both filenames are namespaced by plugin id — the shared cross-IDE directories
+ *     would otherwise collide if two tools ship a same-named agent.
  *
  * Frontmatter rules the loader enforces:
  *   - `description` is **required**. We backfill if missing (first paragraph of the body,
@@ -35,8 +41,8 @@ import java.nio.file.Files
  * Security boundary: the component name is validated through [InputValidation.isValidComponentName]
  * before any path resolution; the source file is refused if it's a symlink (could otherwise
  * point at `~/.ssh/id_rsa` and have those contents wrapped in agent frontmatter and written
- * into the cross-IDE `~/.copilot/agents/` dir); the resolved destination is canonical-path-
- * checked to stay inside the install root.
+ * into the cross-IDE agents dir); every resolved destination is canonical-path-checked to
+ * stay inside its install root.
  */
 internal class AgentInstaller : ComponentInstaller<PluginComponent.Agent> {
 
@@ -56,35 +62,24 @@ internal class AgentInstaller : ComponentInstaller<PluginComponent.Agent> {
         if (Files.isSymbolicLink(component.sourceFile.toPath())) {
             throw SecurityException("Refusing to read symlinked agent source: ${component.sourceFile}")
         }
-        val dest = destFor(component, plugin, scope)
-        val installRoot = installRoot(scope)
-        require(InputValidation.isInsideDir(dest, installRoot)) {
-            "Resolved agent dest escapes install root: $dest (root=$installRoot)"
-        }
-        if (dest.exists()) {
-            log.info("Overwriting existing agent file at ${dest.absolutePath}")
-        }
-        val source = component.sourceFile.readText()
-        val out = backfillFrontmatter(source, component)
-        dest.writeTextEnsuringParent(out)
-        log.info("Installed agent '${component.name}' to ${dest.absolutePath}")
-        return dest
-    }
-
-    private fun destFor(component: PluginComponent.Agent, plugin: PluginManifest, scope: InstallScope): File =
-        when (scope) {
-            is InstallScope.Project -> InstallPaths.agentFile(component.name, scope)
-            is InstallScope.Global -> {
-                // Namespace the global filename by plugin id so two tools can't silently
-                // overwrite each other in the shared cross-IDE `~/.copilot/agents/` dir.
-                val parent = InstallPaths.agentFile(component.name, scope).parentFile
-                File(parent, "${plugin.name}__${component.name}.agent.md")
+        val destinations = InstallPaths.destinationsFor(component, plugin, scope)
+        // Path-escape check per destination — defence-in-depth against a future name
+        // regex relaxation. Every dest must stay under its install root.
+        destinations.forEach { dest ->
+            val installRoot = dest.parentFile
+                ?: error("Agent dest has no parent: $dest")
+            require(InputValidation.isInsideDir(dest, installRoot)) {
+                "Resolved agent dest escapes install root: $dest"
             }
         }
-
-    private fun installRoot(scope: InstallScope): File = when (scope) {
-        is InstallScope.Project -> File(scope.projectDir, ".github/agents")
-        is InstallScope.Global -> File(System.getProperty("user.home"), ".copilot/agents")
+        val rewritten = backfillFrontmatter(component.sourceFile.readText(), component)
+        destinations.forEach { dest ->
+            if (dest.exists()) log.info("Overwriting existing agent file at ${dest.absolutePath}")
+            dest.writeTextEnsuringParent(rewritten)
+        }
+        log.info("Installed agent '${component.name}' to ${destinations.size} location(s)")
+        // Return the primary (first) destination — the report cites one canonical path.
+        return destinations.first()
     }
 
     /**
@@ -140,17 +135,12 @@ internal class AgentInstaller : ComponentInstaller<PluginComponent.Agent> {
     }
 
     /**
-     * Quote a scalar so it survives YAML 1.2 parsing without ambiguity.
-     *
-     * Always single-quote (matching the awesome-copilot style guide for agent files).
-     * Costs a few extra characters; in exchange, every problematic case is handled — YAML
+     * Quote a scalar so it survives YAML 1.2 parsing without ambiguity. Always single-quote
+     * (per the awesome-copilot style guide) so every problematic case is handled — YAML
      * reserved literals (`null`, `true`, `1.0`, `yes`), values starting with special
-     * indicators (`-`, `[`, `*`, `&`, etc.), values containing `: ` or `#` mid-line, and
-     * any leading/trailing whitespace.
-     *
-     * Multiline values (containing `\n` or `\r`) need double-quoting because single-quoted
-     * YAML scalars can't contain control characters; they're handled separately via the
-     * `\n` escape.
+     * indicators (`-`, `[`, `*`, etc.), and any whitespace edges. Multiline values fall
+     * back to double-quoted with `\n` escaping (single-quoted YAML scalars can't contain
+     * control characters).
      */
     private fun yamlScalar(value: String): String {
         if (value.contains('\n') || value.contains('\r')) {

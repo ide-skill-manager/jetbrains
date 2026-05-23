@@ -32,9 +32,15 @@ object PluginInstallState {
         projectBasePath: String?
     ): Boolean {
         val projectScope = projectBasePath?.let { InstallScope.Project(java.io.File(it)) }
-        return scopes(projectScope).any {
-            val dest = InstallPaths.destFor(component, plugin, it).toPath()
-            Files.exists(dest, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(dest)
+        return scopes(projectScope).any { scope ->
+            // A component with multiple destinations (e.g. Agent → `.github/` + `.claude/`)
+            // counts as installed if *any* dest is present. Avoids the "I removed one of two
+            // dual-written files manually; UI now says not-installed even though half is on disk"
+            // confusion — first thing the next install would do is overwrite the half-present file.
+            InstallPaths.destinationsFor(component, plugin, scope).any { dest ->
+                val p = dest.toPath()
+                Files.exists(p, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(p)
+            }
         }
     }
 
