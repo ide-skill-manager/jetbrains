@@ -1,0 +1,20 @@
+# Sample .agentry/config.yaml for the fixture project. See ../README.md for setup notes.
+#
+# Replace the URL below with a registry you control before launching `./gradlew runIde`,
+# or comment out the `sources` and `skills` blocks if you only want to exercise the
+# trust-prompt UI and don't actually want to fetch.
+
+version: "1"
+defaultTarget: CLAUDE_PROJECT
+
+sources:
+  - name: example-registry
+    # Replace with a real registry URL (https://, http://, ssh://, git://, or scp form).
+    # file:// URLs are rejected by validation; see README.md for local-testing options.
+    url: https://github.com/REPLACE_ME/agent-skills.git
+    ref: main
+
+skills:
+  - name: example-skill
+    registry: example-registry
+    target: CLAUDE_PROJECT

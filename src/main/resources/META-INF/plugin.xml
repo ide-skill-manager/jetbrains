@@ -1,0 +1,79 @@
+<idea-plugin>
+    <id>dev.agentry.jetbrains</id>
+    <name>Agentry</name>
+    <vendor url="https://github.com/ide-skill-manager">ide-skill-manager</vendor>
+    <description><![CDATA[
+        Browse, install, and manage agent skills/manifests from git repositories.
+        Supports Claude Code, Junie, GitHub Copilot, and other coding agents.
+        <br/>
+        <ul>
+          <li>Browse skills from git-hosted registries (any branch/tag/commit)</li>
+          <li>Install skills to .claude/, .junie/, or ~/.agentry/</li>
+          <li>Project-level .agentry/config.yaml for team skill sharing</li>
+          <li>Trust-on-first-use auto-sync; live reload on config edits</li>
+          <li>Headless CLI mode (idea agentry list / install / remove)</li>
+        </ul>
+    ]]></description>
+    <change-notes><![CDATA[
+        <b>0.1.0</b>
+        <ul>
+          <li>Initial release: manifest resolver, install layer, tool window, settings,
+              AnActions + ApplicationStarter for agent / CLI access.</li>
+        </ul>
+    ]]></change-notes>
+
+    <idea-version since-build="241" until-build="243.*"/>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Settings page -->
+        <applicationConfigurable
+            parentId="tools"
+            instance="dev.agentry.jetbrains.ui.settings.AgentrySettingsConfigurable"
+            id="dev.agentry.jetbrains.settings"
+            displayName="Agentry"/>
+
+        <!-- Tool window -->
+        <toolWindow
+            id="Agentry"
+            anchor="right"
+            factoryClass="dev.agentry.jetbrains.ui.toolwindow.AgentryToolWindowFactory"
+            icon="/icons/agentry.svg"/>
+
+        <!-- Notification group -->
+        <notificationGroup id="Agentry" displayType="BALLOON" isLogByDefault="true"/>
+
+        <!-- Project-open activity (modern replacement for ProjectManagerListener) -->
+        <postStartupActivity implementation="dev.agentry.jetbrains.AgentryStartupActivity"/>
+
+        <!-- Headless / CLI entry point: `idea agentry ...` -->
+        <appStarter implementation="dev.agentry.jetbrains.cli.AgentryStarter"/>
+    </extensions>
+
+    <actions>
+        <group id="Agentry.ActionGroup" text="Agentry" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="Agentry.Refresh"
+                    class="dev.agentry.jetbrains.actions.RefreshAction"
+                    text="Refresh Registries"
+                    description="Fetch latest manifests from all enabled registries"/>
+            <action id="Agentry.SyncConfig"
+                    class="dev.agentry.jetbrains.actions.SyncConfigAction"
+                    text="Sync .agentry/config.yaml"
+                    description="Install any skills declared in the project config file"/>
+            <action id="Agentry.Install"
+                    class="dev.agentry.jetbrains.actions.InstallSkillAction"
+                    text="Install Skill…"
+                    description="Install a skill by name from any enabled registry"/>
+            <action id="Agentry.Remove"
+                    class="dev.agentry.jetbrains.actions.RemoveSkillAction"
+                    text="Remove Skill…"
+                    description="Uninstall a skill by name"/>
+            <action id="Agentry.AddRegistry"
+                    class="dev.agentry.jetbrains.actions.AddRegistryAction"
+                    text="Add Registry…"
+                    description="Add a git URL as a skill registry"/>
+        </group>
+    </actions>
+</idea-plugin>
