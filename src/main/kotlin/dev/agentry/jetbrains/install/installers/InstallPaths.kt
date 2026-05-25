@@ -51,20 +51,75 @@ internal object InstallPaths {
         File(userHome, ".agentry/plugin-data/$pluginId")
 
     /**
-     * Centralised destination resolver. Single source of truth for "where does component
-     * X for plugin Y land at scope Z". Used by [dev.agentry.jetbrains.install.PluginInstaller]
-     * for install, [dev.agentry.jetbrains.actions.ComponentActions] for uninstall, and
-     * [dev.agentry.jetbrains.install.PluginInstallState] for install-state detection.
+     * Centralised destination resolver. Returns **every** path the component should land at
+     * for the given scope — most component types have one, but [PluginComponent.Agent]
+     * dual-writes to `.github/agents/` and `.claude/agents/` so a single install reaches
+     * Claude Code, Copilot for JetBrains, VS Code Copilot, Copilot CLI, and the cloud
+     * agent without the user having to pick a "side".
+     *
+     * The first element is the **primary** destination — used as the return value of
+     * [dev.agentry.jetbrains.install.PluginInstaller.installPlugin]'s `InstalledComponent`
+     * (so reports / notifications cite one canonical path). All elements are written, all
+     * are checked by [dev.agentry.jetbrains.install.PluginInstallState.isInstalled], and
+     * all are removed on uninstall.
      */
+    fun destinationsFor(
+        component: dev.agentry.jetbrains.model.PluginComponent,
+        plugin: dev.agentry.jetbrains.model.PluginManifest,
+        scope: InstallScope
+    ): List<File> = when (component) {
+        is dev.agentry.jetbrains.model.PluginComponent.Skill -> listOf(skillDir(component.name, scope))
+        is dev.agentry.jetbrains.model.PluginComponent.Command -> listOf(promptFile(component.name, scope))
+        is dev.agentry.jetbrains.model.PluginComponent.Agent -> agentDestinations(component, plugin, scope)
+        is dev.agentry.jetbrains.model.PluginComponent.Hook -> listOf(hookDir(plugin.name, scope))
+        is dev.agentry.jetbrains.model.PluginComponent.McpServer -> listOf(mcpDir(plugin.name, scope))
+    }
+
+    /** Single-destination convenience. Returns the primary path from [destinationsFor]. */
     fun destFor(
         component: dev.agentry.jetbrains.model.PluginComponent,
         plugin: dev.agentry.jetbrains.model.PluginManifest,
         scope: InstallScope
-    ): File = when (component) {
-        is dev.agentry.jetbrains.model.PluginComponent.Skill -> skillDir(component.name, scope)
-        is dev.agentry.jetbrains.model.PluginComponent.Command -> promptFile(component.name, scope)
-        is dev.agentry.jetbrains.model.PluginComponent.Agent -> skillDir("agent-${component.name}", scope)
-        is dev.agentry.jetbrains.model.PluginComponent.Hook -> hookDir(plugin.name, scope)
-        is dev.agentry.jetbrains.model.PluginComponent.McpServer -> mcpDir(plugin.name, scope)
+    ): File = destinationsFor(component, plugin, scope).first()
+
+    /**
+     * Stable install roots an agent's destinations belong inside, in the same order as
+     * [agentDestinations]. Derived from [scope] alone (no user input) so a path-traversal
+     * in the agent or plugin name can't shift the root that containment checks validate
+     * against. `AgentInstaller` zips this with [destinationsFor] to do per-destination
+     * `isInsideDir` checks.
+     */
+    fun agentInstallRoots(scope: InstallScope): List<File> = when (scope) {
+        is InstallScope.Project -> listOf(
+            File(scope.projectDir, ".github/agents"),
+            File(scope.projectDir, ".claude/agents")
+        )
+        is InstallScope.Global -> listOf(
+            File(userHome, ".copilot/agents"),
+            File(userHome, ".claude/agents")
+        )
+    }
+
+    /**
+     * Agent dual-write list. `.github/agents/` is documented by every Copilot variant;
+     * `.claude/agents/` is read by Claude Code and Copilot for JetBrains. Writing to both
+     * (per scope) hits every tool. The Global scope file is namespaced by plugin id
+     * because `~/.copilot/agents/` and `~/.claude/agents/` are shared cross-IDE writable
+     * directories — two tools shipping a same-named agent would otherwise collide.
+     *
+     * Each destination is constructed *inside* its corresponding [agentInstallRoots]
+     * entry, so the two lists are positionally aligned (project: index 0 = .github,
+     * 1 = .claude; global: same order).
+     */
+    private fun agentDestinations(
+        component: dev.agentry.jetbrains.model.PluginComponent.Agent,
+        plugin: dev.agentry.jetbrains.model.PluginManifest,
+        scope: InstallScope
+    ): List<File> {
+        val filename = when (scope) {
+            is InstallScope.Project -> "${component.name}.agent.md"
+            is InstallScope.Global -> "${plugin.name}__${component.name}.agent.md"
+        }
+        return agentInstallRoots(scope).map { root -> File(root, filename) }
     }
 }

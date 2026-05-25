@@ -143,7 +143,7 @@ Workflow tips and the manual smoke checklist live in [CONTRIBUTING.md](CONTRIBUT
 |---|---|---|
 | Pure JUnit | `InputValidation` (path-traversal / flag-injection / URL transport allowlist / branch-name workflow), `ManifestParser`, `InstallTarget.resolvePath` | `./gradlew test` |
 | `BasePlatformTestCase` | `AgentrySettings` round-trip, `.agentry/config.yaml` parsing via VFS, `SkillInstaller` end-to-end against a pre-populated cache (with symlink-rejection check), cache-path collision resistance | `./gradlew test` |
-| Plugin verifier | API compatibility against IDEA Community 2024.1/2/3, PyCharm Community 2024.3, WebStorm 2024.3, Rider 2024.3 | `./gradlew verifyPlugin` |
+| Plugin verifier | API compatibility against IDEA Community 2025.1/2/3 + 2026.1, PyCharm Community 2026.1, WebStorm 2026.1, Rider 2026.1 | `./gradlew verifyPlugin` |
 | Manual smoke | UI behavior, end-to-end git fetch, multi-IDE feel | [`CONTRIBUTING.md`](CONTRIBUTING.md) checklist |
 
 **CI** (see [`.github/workflows/`](.github/workflows/)):
@@ -152,7 +152,7 @@ Workflow tips and the manual smoke checklist live in [CONTRIBUTING.md](CONTRIBUT
 
 ## Requirements
 
-- IntelliJ Platform IC-2024.1 or later (`since-build = 241`, `until-build = 243.*`)
+- IntelliJ Platform IC-2025.1 or later (`since-build = 251`, `until-build = 261.*`)
 - JDK 21 (Gradle toolchain auto-provisions via Foojay)
 - `git` on `PATH`
 

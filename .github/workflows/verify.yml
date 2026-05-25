@@ -12,18 +12,8 @@ jobs:
   verify:
     permissions:
       contents: read
-    name: Verify on ${{ matrix.ide }}
+    name: Verify plugin
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        ide:
-          - IC-2024.3
-          - IC-2024.2
-          - IC-2024.1
-          - PCC-2024.3
-          - WS-2024.3
-          - RD-2024.3
 
     steps:
       - uses: actions/checkout@v4
@@ -38,5 +28,11 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Verify plugin on ${{ matrix.ide }}
-        run: ./gradlew verifyPlugin -Pplugin.verifier.ide.versions=${{ matrix.ide }}
+      # Single job; the IDE matrix lives in build.gradle.kts under
+      # `pluginVerification.ides {}` and Gradle runs every entry in one
+      # `verifyPlugin` invocation. The previous per-IDE GitHub matrix passed
+      # `-Pplugin.verifier.ide.versions=` which is a legacy `gradle-intellij-plugin`
+      # 1.x property — the 2.x `intellij-platform-gradle-plugin` we use ignores it,
+      # so each matrix job redundantly verified the whole set.
+      - name: Verify plugin
+        run: ./gradlew verifyPlugin

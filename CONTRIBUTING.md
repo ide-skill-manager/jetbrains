@@ -77,6 +77,7 @@ Run through this in a sandbox IDE before tagging a release. About 15 minutes.
 - [ ] **Branch workflow** — point a registry at a WIP branch (`feature/foo`), push a new commit to that branch, click Refresh in the IDE, verify the new manifest version appears.
 - [ ] **Settings persist** — restart the sandbox IDE (`./gradlew runIde` again), open Settings, verify the registry you added is still there.
 - [ ] **Trust prompt** — open the fixture project for the first time in a fresh sandbox; the trust balloon appears. Click "Sync once". Skills install. Reopen the project — no balloon (trust isn't auto-elevated, but the file watcher still works if you turned auto-sync on).
+- [ ] **Chat agent install** — install a marketplace plugin that ships a custom agent component. Confirm the `.agent.md` file lands at `<project>/.github/agents/<name>.agent.md` with `description:` present in frontmatter, then open **Tools → GitHub Copilot → Customizations → Chat Agents → Workspace** and verify the agent appears in the table.
 - [ ] **Bad input is rejected** — Settings, paste `ext::sh -c id` as a URL. Should show the validation warning dialog, not accept it.
 - [ ] **Network failure is graceful** — disable wifi, click Refresh. Notification appears with the git error; the IDE doesn't freeze; subsequent refreshes work after reconnecting.
 - [ ] **Headless CLI works** — in a terminal: `idea agentry list` (after `./gradlew buildPlugin` and installing). Skills print to stdout. Exit code 0.

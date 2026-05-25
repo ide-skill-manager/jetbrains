@@ -113,42 +113,121 @@ class PluginInstallerTest : BasePlatformTestCase() {
         assertTrue(cfg.contains(destDir.canonicalPath))
     }
 
-    fun testAgentInstallSurfacesAsRecoverableFailure() {
+    fun testAgentInstallDualWritesGithubAndClaudePaths() {
         val (root, projectDir) = newPluginAndProject("agent-plugin")
         File(root, "agents").mkdirs()
-        File(root, "agents/foo.agent.md").writeText("---\nname: foo\n---\nbody")
+        File(root, "agents/foo.agent.md").writeText(
+            "---\nname: foo\ndescription: 'Reviews diffs'\nmodel: claude-3-5-sonnet\n---\nBody"
+        )
         val manifest = manifest(root, "agent-plugin")
         val components = listOf(
             PluginComponent.Agent(
                 name = "foo",
                 sourceFile = File(root, "agents/foo.agent.md"),
-                description = null
+                description = "Reviews diffs"
             )
         )
         val report = PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
-        assertTrue(report.isFullFailure)
-        val err = report.failed.single()
-        assertEquals(ComponentKind.AGENT, err.kind)
-        assertTrue("agent install errors are recoverable", err.recoverable)
+        assertTrue("expected full success, got: ${report.failed}", report.isFullSuccess)
+        // Dual-write: BOTH paths exist so the agent reaches every tool in the ecosystem.
+        val githubDest = File(projectDir, ".github/agents/foo.agent.md")
+        val claudeDest = File(projectDir, ".claude/agents/foo.agent.md")
+        assertTrue("`.github/agents/` write landed", githubDest.exists())
+        assertTrue("`.claude/agents/` write landed", claudeDest.exists())
+        // Both files have identical normalised content (we rewrite once, copy twice).
+        assertEquals("dual-write content matches", githubDest.readText(), claudeDest.readText())
+        val written = githubDest.readText()
+        assertTrue("name preserved (quoted)", written.contains("name: 'foo'"))
+        assertTrue("description preserved (quoted)", written.contains("description: 'Reviews diffs'"))
+        assertTrue("body preserved", written.contains("Body"))
+        assertTrue("other frontmatter passed through", written.contains("model: claude-3-5-sonnet"))
+    }
+
+    fun testAgentInstallBackfillsMissingDescription() {
+        val (root, projectDir) = newPluginAndProject("agent-no-desc")
+        File(root, "agents").mkdirs()
+        File(root, "agents/quiet.agent.md").writeText("---\nname: quiet\n---\nFirst paragraph of the body.\n\nSecond paragraph.")
+        val components = listOf(
+            PluginComponent.Agent("quiet", File(root, "agents/quiet.agent.md"), description = null)
+        )
+        val report = PluginInstaller().installPlugin(manifest(root, "agent-no-desc"), components, InstallScope.Project(projectDir))
+        assertTrue(report.isFullSuccess)
+        val written = File(projectDir, ".github/agents/quiet.agent.md").readText()
+        // First-paragraph only — broken "concat all paragraphs" impl would emit both.
+        assertTrue(
+            "expected first-paragraph-only description, got: $written",
+            written.contains("description: 'First paragraph of the body.'")
+        )
+        assertFalse(
+            "description must not include the second paragraph",
+            written.lineSequence().any { it.startsWith("description:") && it.contains("Second paragraph") }
+        )
+    }
+
+    fun testAgentInstallGlobalScopeNamespacesByPluginAndDualWrites() {
+        val (root, _) = newPluginAndProject("ns-plugin")
+        File(root, "agents").mkdirs()
+        File(root, "agents/shared.agent.md").writeText("---\nname: shared\ndescription: 'x'\n---\n")
+        val components = listOf(
+            PluginComponent.Agent("shared", File(root, "agents/shared.agent.md"), description = "x")
+        )
+        val report = PluginInstaller().installPlugin(manifest(root, "ns-plugin"), components, InstallScope.Global)
+        assertTrue("global install succeeded: ${report.failed}", report.isFullSuccess)
+        // user.home is overridden to the fixture temp dir in setUp(). Both global locations
+        // get the <plugin>__<name>.agent.md namespaced filename so two tools / plugins
+        // shipping a same-named agent can't overwrite each other.
+        val home = myFixture.tempDirFixture.tempDirPath
+        assertTrue(
+            "expected ~/.copilot/agents/ns-plugin__shared.agent.md",
+            File(home, ".copilot/agents/ns-plugin__shared.agent.md").exists()
+        )
+        assertTrue(
+            "expected ~/.claude/agents/ns-plugin__shared.agent.md",
+            File(home, ".claude/agents/ns-plugin__shared.agent.md").exists()
+        )
+    }
+
+    fun testAgentInstallRefusesSymlinkedSource() {
+        val (root, projectDir) = newPluginAndProject("sym-agent")
+        File(root, "agents").mkdirs()
+        val secret = File(myFixture.tempDirFixture.tempDirPath, "secret").apply { writeText("S3CRET") }
+        val link = File(root, "agents/leak.agent.md")
+        try {
+            java.nio.file.Files.createSymbolicLink(link.toPath(), secret.toPath())
+        } catch (_: Throwable) {
+            return // FS doesn't allow symlinks; skip
+        }
+        val components = listOf(
+            PluginComponent.Agent("leak", link, description = "x")
+        )
+        val report = PluginInstaller().installPlugin(manifest(root, "sym-agent"), components, InstallScope.Project(projectDir))
+        assertTrue("symlinked agent source must fail", report.isFullFailure)
+        // Neither dual-write destination should be created.
+        assertFalse(File(projectDir, ".github/agents/leak.agent.md").exists())
+        assertFalse(File(projectDir, ".claude/agents/leak.agent.md").exists())
     }
 
     fun testMixedSuccessAndFailureProducesPartialReport() {
         val (root, projectDir) = newPluginAndProject("mixed")
         File(root, "skills/ok").mkdirs()
         File(root, "skills/ok/SKILL.md").writeText("---\nname: ok\n---\n")
+        // Force a real failure: an MCP component whose configFile doesn't exist on disk.
+        // Hooks/MCP installers fail loudly if they can't read their config; skill installs fine.
         File(root, "agents").mkdirs()
-        File(root, "agents/bad.agent.md").writeText("---\nname: bad\n---\n")
-        val manifest = manifest(root, "mixed")
         val components = listOf(
             PluginComponent.Skill("ok", File(root, "skills/ok"), File(root, "skills/ok/SKILL.md"), emptyList()),
-            PluginComponent.Agent("bad", File(root, "agents/bad.agent.md"), null)
+            PluginComponent.McpServer(
+                name = "broken",
+                configFile = File(root, "does-not-exist.mcp.json"),
+                bundledFiles = emptyList()
+            )
         )
-        val report = PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
-        assertTrue(report.isPartial)
+        val report = PluginInstaller().installPlugin(manifest(root, "mixed"), components, InstallScope.Project(projectDir))
+        assertTrue("expected partial report", report.isPartial)
         assertEquals(1, report.installed.size)
         assertEquals(ComponentKind.SKILL, report.installed.single().kind)
         assertEquals(1, report.failed.size)
-        assertEquals(ComponentKind.AGENT, report.failed.single().kind)
+        assertEquals(ComponentKind.MCP_SERVER, report.failed.single().kind)
     }
 
     private fun newPluginAndProject(name: String): Pair<File, File> {
