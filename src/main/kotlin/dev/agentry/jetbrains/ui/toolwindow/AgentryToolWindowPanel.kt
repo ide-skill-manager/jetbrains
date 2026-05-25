@@ -22,14 +22,13 @@ import dev.agentry.jetbrains.actions.AgentryTopics
 import dev.agentry.jetbrains.actions.INSTALL_TARGET_DATA_KEY
 import dev.agentry.jetbrains.actions.SELECTED_SKILLS_DATA_KEY
 import dev.agentry.jetbrains.actions.SkillsChangedListener
+import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.settings.AgentrySettings
-import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
 import java.awt.BorderLayout
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
-import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
@@ -85,7 +84,7 @@ class AgentryToolWindowPanel(private val project: Project) {
         uninstallButton.addActionListener {
             val scope = pickedScope()
             val legacy = skillTree.selectedSkills().filter { scope in it.installedScopes }.map { it.name } +
-                skillTree.selectedOrphans().map { it.name }
+                skillTree.selectedOrphans().filter { scope in it.installedScopes }.map { it.name }
             val components = skillTree.selectedComponents().filter { scope in it.installedScopes }
             if (legacy.isEmpty() && components.isEmpty()) {
                 statusLabel.text = "Nothing to remove — select an installed skill or component."; return@addActionListener
@@ -110,7 +109,7 @@ class AgentryToolWindowPanel(private val project: Project) {
                 updateActionButtonState()
             }
         })
-        // Show the friendly displayName (`~/.claude/ (user)`) instead of the enum constant name.
+        // "" = fallback text for null items (unreachable — model is non-empty enum values).
         installTargetCombo.renderer = SimpleListCellRenderer.create("") { t ->
             t.displayName
         }
@@ -139,7 +138,7 @@ class AgentryToolWindowPanel(private val project: Project) {
         panel.add(JBScrollPane(skillTree), BorderLayout.CENTER)
         val bottom = JPanel(BorderLayout()).apply {
             val actions = JPanel().apply {
-                add(JLabel("Install to: "))
+                add(JBLabel("Install to: "))
                 add(installTargetCombo)
                 add(Box.createHorizontalStrut(8))
                 add(installButton)
@@ -254,7 +253,7 @@ class AgentryToolWindowPanel(private val project: Project) {
             checkedComponents.count { scope !in it.installedScopes }
         val toUninstall =
             checkedSkills.count { scope in it.installedScopes } +
-            checkedOrphans.size +
+            checkedOrphans.count { scope in it.installedScopes } +
             checkedComponents.count { scope in it.installedScopes }
         installButton.text = if (toInstall > 0) "Install selected ($toInstall)" else "Install selected"
         uninstallButton.text = if (toUninstall > 0) "Uninstall selected ($toUninstall)" else "Uninstall selected"
@@ -263,13 +262,13 @@ class AgentryToolWindowPanel(private val project: Project) {
     }
 
     /**
-     * Resolve the picker's current selection to a concrete [dev.agentry.jetbrains.install.InstallScope]. The settings
+     * Resolve the picker's current selection to a concrete [InstallScope]. The settings
      * fallback covers the brief window between combo model rebuilds where the selection
      * could be null. The `?: ""` for `project.basePath` is defensive — `CLAUDE_USER`
      * ignores the path entirely, and the combo omits `CLAUDE_PROJECT` when no project is
      * open (so the path is always non-null when it matters).
      */
-    private fun pickedScope(): dev.agentry.jetbrains.install.InstallScope {
+    private fun pickedScope(): InstallScope {
         val target = installTargetCombo.selectedItem as? InstallTarget
             ?: AgentrySettings.getInstance().defaultInstallTarget
         return target.toScope(project.basePath ?: "")
@@ -295,7 +294,7 @@ class AgentryToolWindowPanel(private val project: Project) {
             when (dataId) {
                 SELECTED_SKILLS_DATA_KEY.name -> skillNames
                 CommonDataKeys.PROJECT.name -> project
-                INSTALL_TARGET_DATA_KEY.name -> installTargetCombo.selectedItem
+                INSTALL_TARGET_DATA_KEY.name -> installTargetCombo.selectedItem as? InstallTarget
                 else -> null
             }
         }
@@ -319,7 +318,7 @@ class AgentryToolWindowPanel(private val project: Project) {
             when (dataId) {
                 dev.agentry.jetbrains.actions.SELECTED_COMPONENTS_DATA_KEY.name -> components
                 CommonDataKeys.PROJECT.name -> project
-                INSTALL_TARGET_DATA_KEY.name -> installTargetCombo.selectedItem
+                INSTALL_TARGET_DATA_KEY.name -> installTargetCombo.selectedItem as? InstallTarget
                 else -> null
             }
         }
