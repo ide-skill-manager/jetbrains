@@ -25,10 +25,7 @@ import kotlin.system.exitProcess
  *
  * Exit codes: 0 success, 1 usage error, 2 operation failed.
  */
-@Suppress("OVERRIDE_DEPRECATION", "OVERRIDING_DEPRECATED_MEMBER", "DEPRECATION")
 class AgentryStarter : ApplicationStarter {
-
-    override val commandName: String = "agentry"
 
     override fun main(args: List<String>) {
         // args[0] is the command name itself.

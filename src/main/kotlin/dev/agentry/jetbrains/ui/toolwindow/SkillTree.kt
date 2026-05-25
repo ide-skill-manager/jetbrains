@@ -2,6 +2,7 @@ package dev.agentry.jetbrains.ui.toolwindow
 
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.ui.CheckboxTree
+import com.intellij.ui.CheckboxTreeBase
 import com.intellij.ui.CheckedTreeNode
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
@@ -18,7 +19,7 @@ import javax.swing.tree.TreeNode
  * keyboard toggling, so we just override [isCheckable] to suppress checkboxes on the
  * non-leaf rows (registry headers, orphan group header, root).
  */
-class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null)) {
+class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null), NO_PROPAGATION_POLICY) {
 
     init {
         isRootVisible = false
@@ -176,6 +177,21 @@ class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null)) {
 }
 
 /**
+ * No-propagation check policy: each leaf is independent. The platform's `DEFAULT_POLICY`
+ * (the 2-arg `CheckboxTree(renderer, root)` constructor used to dispatch to) propagates
+ * checked state up and down the tree, which doesn't fit our model — only individual
+ * skills / components / orphans are checkable (the renderer hides the checkbox on
+ * registry / plugin / group headers). The 2-arg constructor was deprecated in 2025.3:
+ * `"provide \`checkPolicy\` explicitly, as the default one is defective"`.
+ */
+private val NO_PROPAGATION_POLICY = CheckboxTreeBase.CheckPolicy(
+    false, // checkChildrenWithCheckedParent
+    false, // uncheckChildrenWithUncheckedParent
+    false, // checkParentWithCheckedChild
+    false, // uncheckParentWithUncheckedChild
+)
+
+/**
  * Renders one row in the [SkillTree]. Three row layouts:
  *
  *   Registry  →  `▶  example-skills @ main   (3 skills)  ✓ enabled`
@@ -203,6 +219,10 @@ private class SkillTreeRenderer : CheckboxTree.CheckboxTreeCellRenderer(/*opaque
         val isCheckableLeaf = node is AgentryNode.Skill ||
             node is AgentryNode.Orphan ||
             node is AgentryNode.Component
+        // `checkbox` is deprecated on 2025.3+ in favour of `threeStateCheckBox`, but the
+        // newer property doesn't exist on 2025.1/2 — our compile floor. Until sinceBuild
+        // moves to 253, the verifier warning on 2025.3+ is unavoidable.
+        @Suppress("DEPRECATION")
         checkbox.isVisible = isCheckableLeaf
 
         textRenderer.clear()
