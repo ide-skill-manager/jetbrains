@@ -26,22 +26,30 @@ import dev.agentry.jetbrains.settings.AgentrySettings
 @Service(Service.Level.APP)
 class BatchOperations {
 
-    fun installByNames(project: Project, skillNames: List<String>) {
+    fun installByNames(
+        project: Project,
+        skillNames: List<String>,
+        target: InstallTarget = AgentrySettings.getInstance().defaultInstallTarget,
+    ) {
         runBatch(project, "install", skillNames, prefetchManifests = true) { name, indicator, manifestsByName ->
             val manifest = manifestsByName[name]
                 ?: return@runBatch BatchOutcome(name, false, "not found in any enabled registry")
             indicator.text = "Installing $name…"
             val r = SkillInstaller.getInstance()
-                .install(manifest, AgentrySettings.getInstance().defaultInstallTarget, project.basePath)
+                .install(manifest, target, project.basePath)
             BatchOutcome(name, r.isSuccess, r.exceptionOrNull()?.message)
         }
     }
 
-    fun uninstallByNames(project: Project, skillNames: List<String>) {
+    fun uninstallByNames(
+        project: Project,
+        skillNames: List<String>,
+        target: InstallTarget = AgentrySettings.getInstance().defaultInstallTarget,
+    ) {
         runBatch(project, "remove", skillNames, prefetchManifests = false) { name, indicator, _ ->
             indicator.text = "Removing $name…"
             val r = SkillInstaller.getInstance()
-                .uninstall(name, AgentrySettings.getInstance().defaultInstallTarget, project.basePath)
+                .uninstall(name, target, project.basePath)
             BatchOutcome(name, r.isSuccess, r.exceptionOrNull()?.message)
         }
     }

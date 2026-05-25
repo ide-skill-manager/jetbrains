@@ -169,7 +169,9 @@ class InstallSelectedAction : AnAction() {
         val project = e.project ?: return
         val names = e.getData(SELECTED_SKILLS_DATA_KEY).orEmpty()
         if (names.isEmpty()) return
-        BatchOperations.getInstance().installByNames(project, names)
+        val target = e.getData(INSTALL_TARGET_DATA_KEY)
+            ?: AgentrySettings.getInstance().defaultInstallTarget
+        BatchOperations.getInstance().installByNames(project, names, target)
     }
 }
 
@@ -179,7 +181,9 @@ class UninstallSelectedAction : AnAction() {
         val project = e.project ?: return
         val names = e.getData(SELECTED_SKILLS_DATA_KEY).orEmpty()
         if (names.isEmpty()) return
-        BatchOperations.getInstance().uninstallByNames(project, names)
+        val target = e.getData(INSTALL_TARGET_DATA_KEY)
+            ?: AgentrySettings.getInstance().defaultInstallTarget
+        BatchOperations.getInstance().uninstallByNames(project, names, target)
     }
 }
 
