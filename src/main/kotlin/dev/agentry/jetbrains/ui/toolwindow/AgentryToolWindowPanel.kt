@@ -73,12 +73,9 @@ class AgentryToolWindowPanel(private val project: Project) {
         refreshButton.addActionListener { reloadEntries() }
         addButton.addActionListener { fireAction("Agentry.AddRegistry", emptyList()) }
         installButton.addActionListener {
-            // Two pipelines: legacy flat-skill installs (SkillManifest-based) and the
-            // newer plugin-component installs (PluginComponent-based via PluginInstaller).
-            // Fire whichever applies to the current selection; if both are present, run
-            // both.
-            val legacySkills = skillTree.selectedSkills().filter { !it.installed }.map { it.name }
-            val components = skillTree.selectedComponents().filter { !it.installed }
+            val scope = pickedScope()
+            val legacySkills = skillTree.selectedSkills().filter { scope !in it.installedScopes }.map { it.name }
+            val components = skillTree.selectedComponents().filter { scope !in it.installedScopes }
             if (legacySkills.isEmpty() && components.isEmpty()) {
                 statusLabel.text = "Nothing to install — select a skill or component."; return@addActionListener
             }
@@ -86,9 +83,10 @@ class AgentryToolWindowPanel(private val project: Project) {
             if (components.isNotEmpty()) fireComponentAction("Agentry.InstallComponents", components)
         }
         uninstallButton.addActionListener {
-            val legacy = skillTree.selectedSkills().filter { it.installed }.map { it.name } +
+            val scope = pickedScope()
+            val legacy = skillTree.selectedSkills().filter { scope in it.installedScopes }.map { it.name } +
                 skillTree.selectedOrphans().map { it.name }
-            val components = skillTree.selectedComponents().filter { it.installed }
+            val components = skillTree.selectedComponents().filter { scope in it.installedScopes }
             if (legacy.isEmpty() && components.isEmpty()) {
                 statusLabel.text = "Nothing to remove — select an installed skill or component."; return@addActionListener
             }
@@ -250,20 +248,31 @@ class AgentryToolWindowPanel(private val project: Project) {
         val checkedSkills = skillTree.selectedSkills()
         val checkedOrphans = skillTree.selectedOrphans()
         val checkedComponents = skillTree.selectedComponents()
-        val pickedTarget = installTargetCombo.selectedItem as? InstallTarget
-            ?: AgentrySettings.getInstance().defaultInstallTarget
-        val pickedScope = pickedTarget.toScope(project.basePath ?: "")  // safe: CLAUDE_USER ignores the path
+        val scope = pickedScope()
         val toInstall =
-            checkedSkills.count { pickedScope !in it.installedScopes } +
-            checkedComponents.count { pickedScope !in it.installedScopes }
+            checkedSkills.count { scope !in it.installedScopes } +
+            checkedComponents.count { scope !in it.installedScopes }
         val toUninstall =
-            checkedSkills.count { pickedScope in it.installedScopes } +
+            checkedSkills.count { scope in it.installedScopes } +
             checkedOrphans.size +
-            checkedComponents.count { pickedScope in it.installedScopes }
+            checkedComponents.count { scope in it.installedScopes }
         installButton.text = if (toInstall > 0) "Install selected ($toInstall)" else "Install selected"
         uninstallButton.text = if (toUninstall > 0) "Uninstall selected ($toUninstall)" else "Uninstall selected"
         installButton.isEnabled = toInstall > 0
         uninstallButton.isEnabled = toUninstall > 0
+    }
+
+    /**
+     * Resolve the picker's current selection to a concrete [dev.agentry.jetbrains.install.InstallScope]. The settings
+     * fallback covers the brief window between combo model rebuilds where the selection
+     * could be null. The `?: ""` for `project.basePath` is defensive — `CLAUDE_USER`
+     * ignores the path entirely, and the combo omits `CLAUDE_PROJECT` when no project is
+     * open (so the path is always non-null when it matters).
+     */
+    private fun pickedScope(): dev.agentry.jetbrains.install.InstallScope {
+        val target = installTargetCombo.selectedItem as? InstallTarget
+            ?: AgentrySettings.getInstance().defaultInstallTarget
+        return target.toScope(project.basePath ?: "")
     }
 
     /**
