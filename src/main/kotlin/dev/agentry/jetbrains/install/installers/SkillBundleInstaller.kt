@@ -3,6 +3,7 @@ package dev.agentry.jetbrains.install.installers
 import com.intellij.openapi.diagnostic.logger
 import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.copySafe
+import dev.agentry.jetbrains.install.deleteRecursivelySymlinkSafe
 import dev.agentry.jetbrains.model.PluginComponent
 import dev.agentry.jetbrains.model.PluginManifest
 import dev.agentry.jetbrains.util.InputValidation
@@ -79,7 +80,7 @@ internal class SkillBundleInstaller : ComponentInstaller<PluginComponent.Skill> 
         } catch (e: Throwable) {
             written.forEach { dest ->
                 runCatching {
-                    val ok = if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
+                    val ok = if (dest.isDirectory) deleteRecursivelySymlinkSafe(dest) else dest.delete()
                     if (!ok) log.warn("Rollback could not fully remove '$dest' — partial files may remain")
                 }.onFailure { cleanupErr ->
                     log.warn("Rollback failed to remove '$dest' after install error: ${cleanupErr.message}")

@@ -1,5 +1,6 @@
 package dev.agentry.jetbrains.install
 
+import com.intellij.openapi.diagnostic.Logger
 import dev.agentry.jetbrains.util.InputValidation
 import java.io.File
 import java.io.IOException
@@ -10,6 +11,8 @@ import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.EnumSet
+
+private val log = Logger.getInstance("dev.agentry.jetbrains.install.InstallUtils")
 
 /**
  * Split a markdown body into `(frontmatter-without-fences, body)` or `(null, body)` when
@@ -95,11 +98,13 @@ internal fun copySafe(source: File, dest: File) {
  * that function would traverse and delete files outside the install root.
  *
  * This implementation uses [Files.walkFileTree] without [java.nio.file.FileVisitOption.FOLLOW_LINKS],
- * so symlinked directory entries are never descended into. A symlinked directory entry causes
- * a [SecurityException] (logged by callers). Symlinked *files* are deleted as the symlink
+ * so symlinked directory entries are never descended into. Symlinked *files* are deleted as the symlink
  * itself (NOFOLLOW_LINKS), which is safe — we remove the link, not its target.
  *
- * Returns `true` if [root] was fully removed; `false` (or throws) on any I/O error.
+ * Returns `true` on full success, `false` on ANY failure — including a planted symlink
+ * inside the tree, an I/O error, or a permission denial. Exceptions are caught internally
+ * and never propagate; callers should treat a `false` return as a failure signal and check
+ * the log for the cause.
  */
 internal fun deleteRecursivelySymlinkSafe(root: File): Boolean {
     if (!root.exists() && !Files.isSymbolicLink(root.toPath())) return true
@@ -143,7 +148,8 @@ internal fun deleteRecursivelySymlinkSafe(root: File): Boolean {
             }
         )
         return true
-    } catch (_: Throwable) {
+    } catch (err: Throwable) {
+        log.debug("deleteRecursivelySymlinkSafe failed for '$root': ${err.message}", err)
         return false
     }
 }
