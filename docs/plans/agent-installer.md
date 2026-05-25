@@ -18,28 +18,29 @@ Source: [GitHub Docs — Creating custom agents for Copilot cloud agent in your 
 ## Phase 1 — Path resolution + installer
 
 - [x] `InstallPaths.destinationsFor(component, plugin, scope)` — returns every dest the install lands at. Agents dual-write to `.github/agents/` AND `.claude/agents/`; Global-scope filenames are namespaced as `<plugin>__<name>.agent.md`. Single source of truth: `AgentInstaller`, `PluginInstallState`, and `ComponentActions` (uninstall) all resolve through this. (Replaces the prior `skillDir("agent-${name}", scope)` placeholder.)
-- [ ] `installers/AgentInstaller.kt` — copy the source `.md` (or `.agent.md`) into `<dest>` after rewriting frontmatter to:
-      1. Ensure `description:` is present. If missing in source, derive from the component's first non-empty paragraph or fall back to `name`. Loader requires it.
-      2. Ensure `name:` matches the install-time name. (Same backfill pattern as `SkillBundleInstaller`.)
-      3. Drop any field that's recognised-but-not-supported on the JetBrains side (the docs list a few; in practice the loader ignores unknowns silently so this is defensive).
-- [ ] `InstallPaths.destFor` — agent branch now calls `agentFile` instead of the `skillDir("agent-…")` placeholder.
-- [ ] Render: drop the "unsupported on JetBrains" badge on AGENT rows in `SkillTreeRenderer`.
+- [x] `installers/AgentInstaller.kt` — copies the source `.md` / `.agent.md` to every destination after rewriting frontmatter:
+      1. `description:` backfilled from source → component override → first non-empty paragraph → `"Custom agent: <name>"`. Loader requires it.
+      2. `name:` backfilled from the source frontmatter, falling back to the component name.
+      3. All other frontmatter (`model`, `tools`, `target`, `argument-hint`, etc.) passes through. Loader ignores unknowns silently.
+      Plus: source-file size cap (1 MB) before read, symlinked source refused, per-destination containment check against an install root derived from scope (not from dest), and always emits `.agent.md` regardless of input extension.
+- [x] `InstallPaths.destFor` — dispatches through `destinationsFor`; the agent branch returns the dual-write list (with global namespacing) instead of the old `skillDir("agent-…")` placeholder.
+- [x] Render: AGENT rows no longer carry an "unsupported on JetBrains" badge in the renderer.
 
 ## Phase 2 — Tests
 
-- [ ] `AgentInstallerTest` (BasePlatformTestCase). Cases:
+- [x] Agent install coverage in `PluginInstallerTest` (BasePlatformTestCase). Cases:
       - Project-scope: source has `description` → file lands at `.github/agents/<name>.agent.md`, frontmatter preserved.
       - Project-scope: source missing `description` → installer backfills from the first paragraph (and falls back to `name` if the body is empty).
       - Project-scope: source missing `name` → installer backfills with the component name.
       - Global-scope: files land at `~/.copilot/agents/<plugin>__<name>.agent.md` AND `~/.claude/agents/<plugin>__<name>.agent.md` (mocked via `user.home` override). Asserts the plugin-id namespacing so two plugins shipping the same agent name can't overwrite each other.
       - Name-validation: malicious `name = "../etc/passwd"` is refused (same gate as the other installers).
-- [ ] `PluginInstallStateTest` (extend the existing if any, else new pure JUnit) — agent install state detected via `agentFile` rather than the old `skillDir` placeholder.
+- [x] Install-state detection routes through `InstallPaths.destinationsFor` (so agent state checks see the dual-write + namespaced destinations, not the old `skillDir` placeholder).
 
 ## Phase 3 — Wire-up clean-up
 
-- [ ] Remove the `UnsupportedComponentException` throw from `AgentInstaller.install`. Real path now.
-- [ ] `SkillTreeRenderer.renderComponent` — delete the AGENT-specific "unsupported on JetBrains" badge.
-- [ ] `PluginInstallerTest.testAgentInstallSurfacesAsRecoverableFailure` — flip to assert a *successful* install path now that we have one. Keep one test that exercises the recoverable path via a *different* deliberately-unsupported component if we add one later.
+- [x] `UnsupportedComponentException` throw removed from `AgentInstaller.install`. Real install path now.
+- [x] `SkillTreeRenderer.renderComponent` — AGENT-specific "unsupported on JetBrains" badge removed.
+- [x] `PluginInstallerTest.testAgentInstallSurfacesAsRecoverableFailure` — flipped to assert successful install paths (`testAgentInstallDualWritesGithubAndClaudePaths`, `testAgentInstallGlobalScopeNamespacesByPluginAndDualWrites`, etc.). A separate `mixed-result` test exercises the recoverable-failure path via a missing MCP config.
 
 ## Phase 4 — Documentation
 

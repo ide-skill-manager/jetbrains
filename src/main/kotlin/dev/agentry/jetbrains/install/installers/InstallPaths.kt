@@ -44,26 +44,6 @@ internal object InstallPaths {
     }
 
     /**
-     * Custom Chat Agents — `<project>/.github/agents/<name>.agent.md` (Project) or
-     * `~/.copilot/agents/<name>.agent.md` (Global).
-     *
-     * Both paths are documented by the Copilot for JetBrains team:
-     * [Agent Configuration and Extensibility wiki](https://github.com/microsoft/copilot-intellij-feedback/wiki/Agent-Configuration-and-Extensibility)
-     * lists `$PROJECT_ROOT/.github/agents/**/*.agent.md` (Local Agent Harness, project)
-     * and `$HOME/.copilot/agents/**/*.agent.md` (Local Agent Harness, user) as the
-     * canonical discovery globs. Files are auto-discovered; no manual registration.
-     *
-     * (The wiki also lists `$PROJECT_ROOT/.claude/agents/**/*.agent.md` as a project
-     * pickup path — Copilot for JetBrains reads both `.github/` and `.claude/` agents
-     * dirs. Worth a future enhancement: dual-write so a single Agentry install reaches
-     * Claude Code too. Tracked as a follow-up.)
-     */
-    fun agentFile(agentName: String, scope: InstallScope): File = when (scope) {
-        is InstallScope.Project -> File(scope.projectDir, ".github/agents/$agentName.agent.md")
-        is InstallScope.Global -> File(userHome, ".copilot/agents/$agentName.agent.md")
-    }
-
-    /**
      * `${CLAUDE_PLUGIN_DATA}` resolves here. The spec is explicit: "directory created
      * lazily on first access." Component installers create it on demand.
      */
@@ -103,27 +83,43 @@ internal object InstallPaths {
     ): File = destinationsFor(component, plugin, scope).first()
 
     /**
+     * Stable install roots an agent's destinations belong inside, in the same order as
+     * [agentDestinations]. Derived from [scope] alone (no user input) so a path-traversal
+     * in the agent or plugin name can't shift the root that containment checks validate
+     * against. `AgentInstaller` zips this with [destinationsFor] to do per-destination
+     * `isInsideDir` checks.
+     */
+    fun agentInstallRoots(scope: InstallScope): List<File> = when (scope) {
+        is InstallScope.Project -> listOf(
+            File(scope.projectDir, ".github/agents"),
+            File(scope.projectDir, ".claude/agents")
+        )
+        is InstallScope.Global -> listOf(
+            File(userHome, ".copilot/agents"),
+            File(userHome, ".claude/agents")
+        )
+    }
+
+    /**
      * Agent dual-write list. `.github/agents/` is documented by every Copilot variant;
      * `.claude/agents/` is read by Claude Code and Copilot for JetBrains. Writing to both
      * (per scope) hits every tool. The Global scope file is namespaced by plugin id
      * because `~/.copilot/agents/` and `~/.claude/agents/` are shared cross-IDE writable
      * directories — two tools shipping a same-named agent would otherwise collide.
+     *
+     * Each destination is constructed *inside* its corresponding [agentInstallRoots]
+     * entry, so the two lists are positionally aligned (project: index 0 = .github,
+     * 1 = .claude; global: same order).
      */
     private fun agentDestinations(
         component: dev.agentry.jetbrains.model.PluginComponent.Agent,
         plugin: dev.agentry.jetbrains.model.PluginManifest,
         scope: InstallScope
-    ): List<File> = when (scope) {
-        is InstallScope.Project -> listOf(
-            File(scope.projectDir, ".github/agents/${component.name}.agent.md"),
-            File(scope.projectDir, ".claude/agents/${component.name}.agent.md")
-        )
-        is InstallScope.Global -> {
-            val nsName = "${plugin.name}__${component.name}.agent.md"
-            listOf(
-                File(userHome, ".copilot/agents/$nsName"),
-                File(userHome, ".claude/agents/$nsName")
-            )
+    ): List<File> {
+        val filename = when (scope) {
+            is InstallScope.Project -> "${component.name}.agent.md"
+            is InstallScope.Global -> "${plugin.name}__${component.name}.agent.md"
         }
+        return agentInstallRoots(scope).map { root -> File(root, filename) }
     }
 }

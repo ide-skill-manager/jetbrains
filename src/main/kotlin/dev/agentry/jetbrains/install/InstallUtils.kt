@@ -8,13 +8,18 @@ import java.nio.file.StandardCopyOption
 
 /**
  * Split a markdown body into `(frontmatter-without-fences, body)` or `(null, body)` when
- * there's no `---` fence at the top. Used by the installers that need to rewrite a few
- * frontmatter fields while preserving the rest of the file. Hand-rolled — `FrontmatterReader`
- * is read-only.
+ * there's no `---` fence on the *first* line. Used by the installers that need to rewrite
+ * a few frontmatter fields while preserving the rest of the file. Hand-rolled —
+ * `FrontmatterReader` is read-only.
+ *
+ * The fence must be on line 0. Leading blank lines mean "no frontmatter" — earlier code
+ * stripped them with `trimStart()` before the check but then scanned the original `lines`
+ * from index 1, mis-parsing files like `"\n---\n…"` (which would yield an empty
+ * frontmatter and the real frontmatter dumped into the body).
  */
 internal fun splitFrontmatter(text: String): Pair<String?, String> {
-    if (!text.trimStart().startsWith("---")) return null to text
     val lines = text.lines()
+    if (lines.isEmpty() || lines[0].trim() != "---") return null to text
     var i = 1
     val fm = StringBuilder()
     while (i < lines.size && lines[i].trim() != "---") {

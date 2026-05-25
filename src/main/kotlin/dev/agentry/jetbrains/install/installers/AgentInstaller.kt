@@ -62,14 +62,26 @@ internal class AgentInstaller : ComponentInstaller<PluginComponent.Agent> {
         if (Files.isSymbolicLink(component.sourceFile.toPath())) {
             throw SecurityException("Refusing to read symlinked agent source: ${component.sourceFile}")
         }
+        // Cap before reading. `readText()` would otherwise pull an arbitrarily large file
+        // into memory, then write it back out to N dual-write targets — a malicious or
+        // accidentally-huge source would amplify N times. Agent markdown files are small
+        // by design; anything past this cap is rejected.
+        val fileSize = component.sourceFile.length()
+        require(fileSize <= MAX_AGENT_FILE_BYTES) {
+            "Agent source exceeds ${MAX_AGENT_FILE_BYTES / 1024}KB limit: " +
+                "${component.sourceFile} ($fileSize bytes)"
+        }
         val destinations = InstallPaths.destinationsFor(component, plugin, scope)
         // Path-escape check per destination — defence-in-depth against a future name
-        // regex relaxation. Every dest must stay under its install root.
-        destinations.forEach { dest ->
-            val installRoot = dest.parentFile
-                ?: error("Agent dest has no parent: $dest")
-            require(InputValidation.isInsideDir(dest, installRoot)) {
-                "Resolved agent dest escapes install root: $dest"
+        // regex relaxation. The install roots come from [scope] alone (no user input), so
+        // a traversal in the agent or plugin name can't shift the root we validate against.
+        val roots = InstallPaths.agentInstallRoots(scope)
+        check(roots.size == destinations.size) {
+            "agent destinations/roots size mismatch: ${destinations.size} vs ${roots.size}"
+        }
+        roots.zip(destinations).forEach { (root, dest) ->
+            require(InputValidation.isInsideDir(dest, root)) {
+                "Resolved agent dest escapes install root: $dest (root=$root)"
             }
         }
         val rewritten = backfillFrontmatter(component.sourceFile.readText(), component)
@@ -156,5 +168,13 @@ internal class AgentInstaller : ComponentInstaller<PluginComponent.Agent> {
     companion object {
         /** Cap body read for description derivation to keep memory bounded. */
         private const val MAX_BODY_BYTES = 64 * 1024
+
+        /**
+         * Hard ceiling on the agent source file size before we read it in. Agent markdown
+         * files are small by spec (frontmatter + a few paragraphs); 1 MB is generous and
+         * still leaves us bounded regardless of how many dual-write destinations we
+         * fan out to.
+         */
+        private const val MAX_AGENT_FILE_BYTES = 1024L * 1024L
     }
 }
