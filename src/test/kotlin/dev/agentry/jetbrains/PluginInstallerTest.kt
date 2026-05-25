@@ -314,6 +314,38 @@ class PluginInstallerTest : BasePlatformTestCase() {
         assertEquals(InstallScope.Global, resolved)
     }
 
+    fun testInstallAtUserScopeWhenAlreadyAtProjectEndsUpAtBoth() {
+        val (root, projectDir) = newPluginAndProject("both-scope-agent")
+        File(root, "agents").mkdirs()
+        File(root, "agents/dual.agent.md").writeText("---\nname: dual\ndescription: 'x'\n---\n")
+        val components = listOf(
+            PluginComponent.Agent("dual", File(root, "agents/dual.agent.md"), description = "x")
+        )
+        val manifest = manifest(root, "both-scope-agent")
+
+        // First install: Project scope.
+        val first = PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
+        assertTrue("project install OK", first.isFullSuccess)
+
+        // Second install: Global scope. Should NOT remove project files.
+        val second = PluginInstaller().installPlugin(manifest, components, InstallScope.Global)
+        assertTrue("global install OK", second.isFullSuccess)
+
+        val home = myFixture.tempDirFixture.tempDirPath  // user.home is overridden in setUp()
+        assertTrue("project dest still exists",
+            File(projectDir, ".github/agents/dual.agent.md").exists())
+        assertTrue("project .claude dest still exists",
+            File(projectDir, ".claude/agents/dual.agent.md").exists())
+        assertTrue("global .copilot dest now exists",
+            File(home, ".copilot/agents/both-scope-agent__dual.agent.md").exists())
+        assertTrue("global .claude dest now exists",
+            File(home, ".claude/agents/both-scope-agent__dual.agent.md").exists())
+
+        // PluginInstallState.locationsOf reports both.
+        val locs = PluginInstallState.locationsOf(components.first(), manifest, projectDir.absolutePath)
+        assertEquals(setOf<InstallScope>(InstallScope.Project(File(projectDir.absolutePath)), InstallScope.Global), locs)
+    }
+
     private fun newPluginAndProject(name: String): Pair<File, File> {
         val temp = File(myFixture.tempDirFixture.tempDirPath, "test-${System.nanoTime()}").apply { mkdirs() }
         val root = File(temp, name).apply { mkdirs() }
