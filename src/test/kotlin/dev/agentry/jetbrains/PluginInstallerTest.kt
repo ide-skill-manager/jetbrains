@@ -4,6 +4,7 @@ import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import dev.agentry.jetbrains.actions.INSTALL_TARGET_DATA_KEY
 import dev.agentry.jetbrains.actions.resolveInstallScope
+import dev.agentry.jetbrains.actions.uninstallComponents
 import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.PluginInstallState
 import dev.agentry.jetbrains.install.PluginInstaller
@@ -374,6 +375,44 @@ class PluginInstallerTest : BasePlatformTestCase() {
         // PluginInstallState.locationsOf reports both.
         val locs = PluginInstallState.locationsOf(components.first(), manifest, projectDir.absolutePath)
         assertEquals(setOf<InstallScope>(InstallScope.Project(File(projectDir.absolutePath)), InstallScope.Global), locs)
+    }
+
+    // -------------------------------------------------------------------------
+    // Regression: uninstall must actually delete — not silently succeed on partial failure
+    // -------------------------------------------------------------------------
+
+    fun testUninstallActuallyDeletesPrimaryDestination() {
+        // Use a distinct skill name to avoid colliding with the global "probe" installation
+        // created by testSkillInstallGlobalScopeDualWritesToCopilotAndClaude (user.home is
+        // shared across all tests in the class, so leftovers from other tests persist).
+        val (root, projectDir) = newPluginAndProject("delete-check")
+        val skillName = "uninstall-regression-skill"
+        File(root, "skills/$skillName").mkdirs()
+        File(root, "skills/$skillName/SKILL.md").writeText("---\nname: $skillName\n---\n")
+        val component = PluginComponent.Skill(
+            name = skillName,
+            sourceDir = File(root, "skills/$skillName"),
+            skillFile = File(root, "skills/$skillName/SKILL.md"),
+            supportFiles = emptyList()
+        )
+        val manifest = manifest(root, "delete-check")
+
+        val installReport = PluginInstaller().installPlugin(manifest, listOf(component), InstallScope.Project(projectDir))
+        assertTrue("install OK: ${installReport.failed}", installReport.isFullSuccess)
+        val destDir = File(projectDir, ".claude/skills/$skillName")
+        assertTrue("dest exists after install", destDir.exists())
+
+        // Exercise the actual uninstallComponents code path — it's now `internal` for testability.
+        val uninstallReport = uninstallComponents(manifest, listOf(component), InstallScope.Project(projectDir))
+        assertTrue("uninstall OK: ${uninstallReport.failed}", uninstallReport.isFullSuccess)
+
+        // The primary destination (and its entire directory tree) must be gone.
+        val primaryDest = File(projectDir, ".claude/skills/$skillName")
+        assertFalse("primary dest gone after uninstall", primaryDest.exists())
+
+        // PluginInstallState.locationsOf must also report nothing — no badge should linger.
+        val locs = PluginInstallState.locationsOf(component, manifest, projectDir.absolutePath)
+        assertTrue("locationsOf reports nothing after uninstall, got: $locs", locs.isEmpty())
     }
 
     private fun newPluginAndProject(name: String): Pair<File, File> {

@@ -21,10 +21,14 @@ import dev.agentry.jetbrains.model.PluginManifest
 import dev.agentry.jetbrains.settings.AgentrySettings
 import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
 import dev.agentry.jetbrains.util.InputValidation
+import com.intellij.openapi.diagnostic.Logger
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import javax.swing.tree.TreeNode
+
+private val log = Logger.getInstance("dev.agentry.jetbrains.actions.ComponentActions")
 
 /**
  * Actions that install / uninstall plugin components (skills, commands, hooks, MCP
@@ -150,7 +154,7 @@ private fun AgentryNode.Component.parentPluginManifest(): PluginManifest? {
  * the wrong files. Future work folds this back into `PluginInstaller` proper as a sibling
  * `uninstallPlugin`.
  */
-private fun uninstallComponents(
+internal fun uninstallComponents(
     plugin: PluginManifest,
     components: List<PluginComponent>,
     scope: InstallScope
@@ -176,7 +180,14 @@ private fun uninstallComponents(
                 if (Files.isSymbolicLink(destPath)) {
                     throw SecurityException("Refusing to delete symlinked install destination: $dest")
                 }
-                if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
+                val ok = if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
+                if (!ok) {
+                    throw IOException(
+                        "Failed to delete '$dest' (deleteRecursively returned false — likely a " +
+                        "permission or open-file issue; check the IDE log for I/O errors)"
+                    )
+                }
+                log.info("Uninstalled '${c.name}' from ${dest.absolutePath}")
             }
         }.onSuccess {
             installed += dev.agentry.jetbrains.install.InstalledComponent(
