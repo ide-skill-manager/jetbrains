@@ -5,6 +5,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
@@ -14,8 +15,10 @@ import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.PluginInstallReport
 import dev.agentry.jetbrains.install.PluginInstaller
 import dev.agentry.jetbrains.install.installers.InstallPaths
+import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.PluginComponent
 import dev.agentry.jetbrains.model.PluginManifest
+import dev.agentry.jetbrains.settings.AgentrySettings
 import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
 import dev.agentry.jetbrains.util.InputValidation
 import java.io.File
@@ -35,13 +38,35 @@ import javax.swing.tree.TreeNode
  * plugin manifest so the installer can name and version each install report correctly.
  */
 
+/**
+ * Map the action's [DataContext] to the [InstallScope] the install/uninstall should
+ * target. Reads the user's pick from the tool-window combo via [INSTALL_TARGET_DATA_KEY];
+ * falls back to `AgentrySettings.defaultInstallTarget` for CLI / agent-fired paths that
+ * never set the key. `CLAUDE_PROJECT` with a null project base path falls back to
+ * `CLAUDE_USER` to keep the resolution total — should be unreachable from the panel
+ * (it disables `Project` in the combo when no project is open) but matters for CLI.
+ */
+internal fun resolveInstallScope(
+    dataContext: DataContext,
+    projectBasePath: String?,
+): InstallScope {
+    val target = dataContext.getData(INSTALL_TARGET_DATA_KEY)
+        ?: AgentrySettings.getInstance().defaultInstallTarget
+    return when (target) {
+        InstallTarget.CLAUDE_USER -> InstallScope.Global
+        InstallTarget.CLAUDE_PROJECT ->
+            if (projectBasePath != null) target.toScope(projectBasePath)
+            else InstallScope.Global
+    }
+}
+
 class InstallComponentsAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         val nodes = e.getData(SELECTED_COMPONENTS_DATA_KEY).orEmpty()
         if (nodes.isEmpty()) return
-        runComponentOp(project, nodes, install = true)
+        runComponentOp(e, project, nodes, install = true)
     }
 }
 
@@ -51,7 +76,7 @@ class UninstallComponentsAction : AnAction() {
         val project = e.project ?: return
         val nodes = e.getData(SELECTED_COMPONENTS_DATA_KEY).orEmpty()
         if (nodes.isEmpty()) return
-        runComponentOp(project, nodes, install = false)
+        runComponentOp(e, project, nodes, install = false)
     }
 }
 
@@ -60,15 +85,14 @@ class UninstallComponentsAction : AnAction() {
  * selected components by their parent plugin manifest, dispatches one batch per plugin,
  * aggregates results into a single end-of-task notification, and publishes SKILLS_CHANGED.
  */
-private fun runComponentOp(project: Project, nodes: List<AgentryNode.Component>, install: Boolean) {
+private fun runComponentOp(e: AnActionEvent, project: Project, nodes: List<AgentryNode.Component>, install: Boolean) {
     val verb = if (install) "install" else "uninstall"
     val title = "Agentry: ${verb}ing ${nodes.size} component(s)"
     ProgressManager.getInstance().run(
         object : Task.Backgroundable(project, title, true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = false
-                val basePath = project.basePath?.let { File(it) }
-                val scope: InstallScope = if (basePath != null) InstallScope.Project(basePath) else InstallScope.Global
+                val scope: InstallScope = resolveInstallScope(e.dataContext, project.basePath)
                 val byPlugin: Map<PluginManifest, List<AgentryNode.Component>> = nodes
                     .mapNotNull { node -> node.parentPluginManifest()?.let { it to node } }
                     .groupBy({ it.first }, { it.second })

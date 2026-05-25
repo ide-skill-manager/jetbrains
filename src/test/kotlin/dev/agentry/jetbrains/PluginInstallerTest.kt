@@ -275,6 +275,37 @@ class PluginInstallerTest : BasePlatformTestCase() {
         assertEquals(setOf<InstallScope>(InstallScope.Global), locs)
     }
 
+    // -------------------------------------------------------------------------
+    // resolveInstallScope unit tests (Task 6 — core bug fix)
+    // -------------------------------------------------------------------------
+
+    fun testResolveInstallScopeReturnsGlobalWhenPickerSetsClaudeUser() {
+        val ctx = com.intellij.openapi.actionSystem.DataContext { id ->
+            if (id == dev.agentry.jetbrains.actions.INSTALL_TARGET_DATA_KEY.name)
+                dev.agentry.jetbrains.model.InstallTarget.CLAUDE_USER
+            else null
+        }
+        val resolved = dev.agentry.jetbrains.actions.resolveInstallScope(ctx, "/tmp/proj")
+        assertEquals(dev.agentry.jetbrains.install.InstallScope.Global, resolved)
+    }
+
+    fun testResolveInstallScopeReturnsProjectWhenPickerSetsClaudeProject() {
+        val ctx = com.intellij.openapi.actionSystem.DataContext { id ->
+            if (id == dev.agentry.jetbrains.actions.INSTALL_TARGET_DATA_KEY.name)
+                dev.agentry.jetbrains.model.InstallTarget.CLAUDE_PROJECT
+            else null
+        }
+        val resolved = dev.agentry.jetbrains.actions.resolveInstallScope(ctx, "/tmp/proj")
+        assertEquals(dev.agentry.jetbrains.install.InstallScope.Project(java.io.File("/tmp/proj")), resolved)
+    }
+
+    fun testResolveInstallScopeFallsBackToSettingsWhenNoPicker() {
+        val ctx = com.intellij.openapi.actionSystem.DataContext { _ -> null }
+        val resolved = dev.agentry.jetbrains.actions.resolveInstallScope(ctx, "/tmp/proj")
+        // Settings default is CLAUDE_USER (per Task 2) → Global
+        assertEquals(dev.agentry.jetbrains.install.InstallScope.Global, resolved)
+    }
+
     private fun newPluginAndProject(name: String): Pair<File, File> {
         val temp = File(myFixture.tempDirFixture.tempDirPath, "test-${System.nanoTime()}").apply { mkdirs() }
         val root = File(temp, name).apply { mkdirs() }
