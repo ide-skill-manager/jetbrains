@@ -169,8 +169,7 @@ class InstallSelectedAction : AnAction() {
         val project = e.project ?: return
         val names = e.getData(SELECTED_SKILLS_DATA_KEY).orEmpty()
         if (names.isEmpty()) return
-        val target = e.getData(INSTALL_TARGET_DATA_KEY)
-            ?: AgentrySettings.getInstance().defaultInstallTarget
+        val target = resolveInstallTarget(e)
         BatchOperations.getInstance().installByNames(project, names, target)
     }
 }
@@ -181,8 +180,7 @@ class UninstallSelectedAction : AnAction() {
         val project = e.project ?: return
         val names = e.getData(SELECTED_SKILLS_DATA_KEY).orEmpty()
         if (names.isEmpty()) return
-        val target = e.getData(INSTALL_TARGET_DATA_KEY)
-            ?: AgentrySettings.getInstance().defaultInstallTarget
+        val target = resolveInstallTarget(e)
         BatchOperations.getInstance().uninstallByNames(project, names, target)
     }
 }
@@ -206,6 +204,17 @@ class AddRegistryAction : AnAction() {
         publishChanged(project)
     }
 }
+
+/**
+ * Read the user's selected install target from an action's data context, falling back
+ * to [AgentrySettings.defaultInstallTarget] when the key isn't set (CLI / agent-fired paths).
+ * Mirrors `resolveInstallScope` in `ComponentActions.kt` — same fallback contract, but
+ * returns the typed [InstallTarget] for callers that work with targets directly
+ * (BatchOperations) rather than scopes (PluginInstaller via InstallScope).
+ */
+internal fun resolveInstallTarget(e: AnActionEvent): InstallTarget =
+    e.getData(INSTALL_TARGET_DATA_KEY)
+        ?: AgentrySettings.getInstance().defaultInstallTarget
 
 /** Broadcast a "skills changed" event so any subscribed view re-renders. */
 internal fun publishChanged(project: Project) {
