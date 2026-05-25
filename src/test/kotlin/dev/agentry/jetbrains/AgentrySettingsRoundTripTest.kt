@@ -75,8 +75,37 @@ class AgentrySettingsRoundTripTest : BasePlatformTestCase() {
             settings.loadState(
                 AgentrySettings.State(defaultInstallTarget = "WAS_REMOVED_IN_NEXT_VERSION")
             )
-            // Unknown enum value must not throw — fall back to CLAUDE_PROJECT.
-            assertEquals(InstallTarget.CLAUDE_PROJECT, settings.defaultInstallTarget)
+            // Unknown enum value must not throw — fall back to CLAUDE_USER.
+            assertEquals(InstallTarget.CLAUDE_USER, settings.defaultInstallTarget)
+        } finally {
+            settings.loadState(before)
+        }
+    }
+
+    fun testDefaultInstallTargetIsClaudeUser() {
+        val freshState = AgentrySettings.State()
+        assertEquals("CLAUDE_USER", freshState.defaultInstallTarget)
+    }
+
+    fun testLoadStateCoercesUnknownTargetToClaudeUser() {
+        val settings = AgentrySettings.getInstance()
+        val before = settings.state
+        try {
+            val stale = AgentrySettings.State().apply { defaultInstallTarget = "AGENTRY_CACHE" }
+            settings.loadState(stale)
+            assertEquals("CLAUDE_USER", settings.getState().defaultInstallTarget)
+        } finally {
+            settings.loadState(before)
+        }
+    }
+
+    fun testLoadStateKeepsKnownTarget() {
+        val settings = AgentrySettings.getInstance()
+        val before = settings.state
+        try {
+            val state = AgentrySettings.State().apply { defaultInstallTarget = "CLAUDE_PROJECT" }
+            settings.loadState(state)
+            assertEquals("CLAUDE_PROJECT", settings.getState().defaultInstallTarget)
         } finally {
             settings.loadState(before)
         }
