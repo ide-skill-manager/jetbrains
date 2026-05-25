@@ -1,5 +1,6 @@
 package dev.agentry.jetbrains.install.installers
 
+import com.intellij.openapi.diagnostic.logger
 import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.copySafe
 import dev.agentry.jetbrains.model.PluginComponent
@@ -10,13 +11,20 @@ import java.nio.file.Files
 
 /**
  * Installs a [PluginComponent.Skill] by recursively copying its source directory to the
- * target install path, with symlink-rejection on every entry (per the security review
+ * target install path(s), with symlink-rejection on every entry (per the security review
  * from the merged UI PR).
+ *
+ * At Global scope, dual-writes to both `~/.copilot/skills/<name>/` and
+ * `~/.claude/skills/<name>/` so Claude Code can find the skill — mirroring the agent
+ * dual-write introduced in 3d259c6. At Project scope, a single `.claude/skills/<name>/`
+ * copy is sufficient because every tool reads it from there.
  *
  * If the skill's `SKILL.md` is missing a `name` field, write one in based on the source
  * directory's basename so downstream agents that key on frontmatter work.
  */
 internal class SkillBundleInstaller : ComponentInstaller<PluginComponent.Skill> {
+
+    private val log = logger<SkillBundleInstaller>()
 
     override fun install(
         component: PluginComponent.Skill,
@@ -26,10 +34,25 @@ internal class SkillBundleInstaller : ComponentInstaller<PluginComponent.Skill> 
         require(InputValidation.isValidSkillName(component.name)) {
             "Invalid skill name: '${component.name}'"
         }
-        val dest = InstallPaths.skillDir(component.name, scope)
-        copySafe(component.sourceDir, dest)
-        backfillNameInSkillMd(dest, component.name)
-        return dest
+        val destinations = InstallPaths.destinationsFor(component, plugin, scope)
+        val roots = InstallPaths.skillInstallRoots(scope)
+        check(roots.size == destinations.size) {
+            "skill destinations/roots size mismatch: ${destinations.size} vs ${roots.size}"
+        }
+        // Defence-in-depth: each destination must be inside its corresponding root so a
+        // traversal in the skill name can't escape to an arbitrary directory.
+        roots.zip(destinations).forEach { (root, dest) ->
+            require(InputValidation.isInsideDir(dest, root)) {
+                "Resolved skill dest escapes install root: $dest (root=$root)"
+            }
+        }
+        destinations.forEach { dest ->
+            copySafe(component.sourceDir, dest)
+            backfillNameInSkillMd(dest, component.name)
+        }
+        log.info("Installed skill '${component.name}' to ${destinations.size} location(s)")
+        // Return the primary (first) destination — the report cites one canonical path.
+        return destinations.first()
     }
 
     /**

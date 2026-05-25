@@ -142,7 +142,7 @@ Sources: [Chris Ayers — Agent Skills, Plugins, and Marketplaces][ayers],
 
 | Component | What we write | Why |
 |---|---|---|
-| Skill | `.claude/skills/<name>/` (Project) ・ `~/.copilot/skills/<name>/` (Global) | Today: Claude-first. Standardise on `.claude/skills/` follow-up — per the GitHub docs<sup>[gh-add-skills]</sup> all Copilot variants read it too, so one write hits every tool. |
+| Skill | `.claude/skills/<name>/` (Project) ・ **`~/.copilot/skills/<name>/` + `~/.claude/skills/<name>/`** (Global, dual-write) | One install reaches Claude Code AND every Copilot variant. Mirrors the agent dual-write (3d259c6). Project scope stays single-write — `.claude/skills/` is read by Claude Code AND Copilot for JetBrains from the project, so no second location needed there. |
 | Agent | **`.github/agents/<name>.agent.md` + `.claude/agents/<name>.agent.md`** (Project) ・ **`~/.copilot/agents/<plugin>__<name>.agent.md` + `~/.claude/agents/<plugin>__<name>.agent.md`** (Global) | Dual-write: VS Code Copilot's custom-agents docs only mention `.github/`; Claude Code only reads `.claude/`. Two writes hit every tool. Global filenames are namespaced because the home-level dirs are shared cross-IDE writable surfaces. |
 | Command | `.github/prompts/<name>.prompt.md` (Project) | Lossy translation: Claude Code's `commands/<name>.md` becomes JetBrains' Prompt File. `argument-hint` dropped with a warning; positional `$1` markers passed through as literal text. |
 | Hook | `.github/hooks/<plugin>/hooks.json` (Project) — **bug**, wiki says `.hooks.json` flat | Tracked as a follow-up. |

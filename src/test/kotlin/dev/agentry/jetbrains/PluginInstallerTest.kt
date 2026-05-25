@@ -169,6 +169,36 @@ class PluginInstallerTest : BasePlatformTestCase() {
         )
     }
 
+    fun testSkillInstallGlobalScopeDualWritesToCopilotAndClaude() {
+        val (root, _) = newPluginAndProject("dualwrite-skill")
+        File(root, "skills/probe").mkdirs()
+        File(root, "skills/probe/SKILL.md").writeText("---\nname: probe\n---\nBody")
+        val manifest = manifest(root, "dualwrite-skill")
+        val components = listOf(
+            PluginComponent.Skill(
+                name = "probe",
+                sourceDir = File(root, "skills/probe"),
+                skillFile = File(root, "skills/probe/SKILL.md"),
+                supportFiles = emptyList()
+            )
+        )
+        val report = PluginInstaller().installPlugin(manifest, components, InstallScope.Global)
+        assertTrue("global install succeeded: ${report.failed}", report.isFullSuccess)
+        val home = myFixture.tempDirFixture.tempDirPath  // user.home is overridden in setUp()
+        assertTrue(
+            "~/.copilot/skills/probe/SKILL.md exists",
+            File(home, ".copilot/skills/probe/SKILL.md").exists()
+        )
+        assertTrue(
+            "~/.claude/skills/probe/SKILL.md exists",
+            File(home, ".claude/skills/probe/SKILL.md").exists()
+        )
+        // Both copies should have identical content.
+        val copilotText = File(home, ".copilot/skills/probe/SKILL.md").readText()
+        val claudeText = File(home, ".claude/skills/probe/SKILL.md").readText()
+        assertEquals("dual-write content matches", copilotText, claudeText)
+    }
+
     fun testAgentInstallGlobalScopeNamespacesByPluginAndDualWrites() {
         val (root, _) = newPluginAndProject("ns-plugin")
         File(root, "agents").mkdirs()
