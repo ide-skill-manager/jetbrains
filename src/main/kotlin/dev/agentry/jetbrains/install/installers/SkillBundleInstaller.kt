@@ -46,9 +46,42 @@ internal class SkillBundleInstaller : ComponentInstaller<PluginComponent.Skill> 
                 "Resolved skill dest escapes install root: $dest (root=$root)"
             }
         }
+        // Canonical-root containment check: guard against intermediate symlinks (e.g.
+        // <project>/.claude -> /etc/). isInsideDir uses the lexical path so it would pass
+        // even if .claude resolves outside the project. We re-check with canonical paths,
+        // which collapse all symlinks, to catch such escapes.
+        val expectedRoot: File = when (scope) {
+            is InstallScope.Project -> scope.projectDir
+            is InstallScope.Global -> File(System.getProperty("user.home"))
+        }
+        val canonicalRoot = expectedRoot.canonicalFile
         destinations.forEach { dest ->
-            copySafe(component.sourceDir, dest)
-            backfillNameInSkillMd(dest, component.name)
+            val canonicalDest = dest.canonicalFile
+            if (!canonicalDest.toPath().startsWith(canonicalRoot.toPath())) {
+                throw SecurityException(
+                    "Refusing to install: canonical path '$canonicalDest' escapes install root '$canonicalRoot'"
+                )
+            }
+        }
+        // Multi-destination install with rollback: if any destination fails after earlier
+        // ones have been written, clean up the already-written destinations before re-throwing
+        // so we don't leave a partial install behind.
+        val written = mutableListOf<File>()
+        try {
+            destinations.forEach { dest ->
+                copySafe(component.sourceDir, dest)
+                backfillNameInSkillMd(dest, component.name)
+                written += dest
+            }
+        } catch (e: Throwable) {
+            written.forEach { dest ->
+                runCatching {
+                    if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
+                }.onFailure { cleanupErr ->
+                    log.warn("Rollback failed to remove '$dest' after install error: ${cleanupErr.message}")
+                }
+            }
+            throw e
         }
         log.info("Installed skill '${component.name}' to ${destinations.size} location(s)")
         // Return the primary (first) destination — the report cites one canonical path.

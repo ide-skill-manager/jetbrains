@@ -450,6 +450,112 @@ class PluginInstallerTest : BasePlatformTestCase() {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Fix 2: canonical-root containment check on the INSTALL path
+    // -------------------------------------------------------------------------
+
+    fun testInstallRefusesSymlinkedIntermediateDir() {
+        // Real-FS temp dir — the IntelliJ VFS fixture doesn't support real symlinks.
+        val base = java.nio.file.Files.createTempDirectory("install-symlink-test").toFile()
+        try {
+            val projectDir = File(base, "proj").apply { mkdirs() }
+            val root = File(base, "plugin").apply { mkdirs() }
+            val realPlace = File(base, "elsewhere").apply { mkdirs() }
+            val projectClaude = File(projectDir, ".claude")
+            try {
+                java.nio.file.Files.createSymbolicLink(projectClaude.toPath(), realPlace.toPath())
+            } catch (_: Throwable) {
+                return // FS doesn't support symlinks; skip
+            }
+
+            File(root, "skills/foo").mkdirs()
+            File(root, "skills/foo/SKILL.md").writeText("---\nname: foo\n---\n")
+            val component = PluginComponent.Skill(
+                name = "foo",
+                sourceDir = File(root, "skills/foo"),
+                skillFile = File(root, "skills/foo/SKILL.md"),
+                supportFiles = emptyList()
+            )
+            val pluginManifest = manifest(root, "symlink-install-test")
+
+            // PluginInstaller.dispatch wraps with runCatching; SecurityException surfaces as
+            // a failed component in the report.
+            val report = PluginInstaller().installPlugin(
+                pluginManifest,
+                listOf(component),
+                InstallScope.Project(projectDir)
+            )
+            assertTrue(
+                "expected install to be refused for symlinked intermediate dir, got: ${report.failed}",
+                report.isFullFailure
+            )
+            val failReason = report.failed.firstOrNull()?.reason ?: ""
+            assertTrue(
+                "expected 'escapes install root' in error, got: $failReason",
+                failReason.contains("escapes install root")
+            )
+            // Nothing should have been written into realPlace.
+            assertTrue("nothing written to symlink target", realPlace.listFiles().isNullOrEmpty())
+        } finally {
+            base.deleteRecursively()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Fix 3: rollback on partial dual-write failure
+    // -------------------------------------------------------------------------
+
+    fun testInstallRollsBackPartialDualWriteOnFailure() {
+        // Override user.home to a temp dir so we control the Global install roots.
+        // Then make ~/.claude/skills read-only so the second leg of a Global install fails.
+        // On macOS, setReadOnly() does not always prevent the owner from writing; if the
+        // read-only sentinel itself can still be written, we skip this test.
+        val home = java.nio.file.Files.createTempDirectory("rollback-test").toFile()
+        val originalUserHome = System.getProperty("user.home")
+        val claudeSkillsDir = File(home, ".claude/skills").apply { mkdirs() }
+        val copilotSkillsDir = File(home, ".copilot/skills")
+        try {
+            // Verify that setReadOnly actually prevents writes on this filesystem;
+            // if not, skip the test (macOS owner bypass).
+            claudeSkillsDir.setReadOnly()
+            val probe = File(claudeSkillsDir, "probe.txt")
+            val blocked = try { probe.createNewFile(); probe.delete(); false } catch (_: Throwable) { true }
+            if (!blocked) {
+                // setReadOnly doesn't block writes for the current user (common on macOS).
+                // Rollback behaviour is verified by code inspection; skip the runtime test.
+                return
+            }
+
+            System.setProperty("user.home", home.absolutePath)
+
+            val root = File(home, "plugin-root").apply { mkdirs() }
+            File(root, "skills/rollback-skill").mkdirs()
+            File(root, "skills/rollback-skill/SKILL.md").writeText("---\nname: rollback-skill\n---\n")
+            val component = PluginComponent.Skill(
+                name = "rollback-skill",
+                sourceDir = File(root, "skills/rollback-skill"),
+                skillFile = File(root, "skills/rollback-skill/SKILL.md"),
+                supportFiles = emptyList()
+            )
+            val pluginManifest = manifest(root, "rollback-plugin")
+
+            val report = PluginInstaller().installPlugin(pluginManifest, listOf(component), InstallScope.Global)
+            // The install must have failed (second destination couldn't be written).
+            assertTrue("expected failure when second destination unwritable: ${report.installed}", report.isFullFailure)
+            // The first destination (.copilot/skills/rollback-skill) should have been
+            // rolled back and therefore must not exist.
+            assertFalse(
+                "copilot side must be rolled back after failure",
+                File(copilotSkillsDir, "rollback-skill").exists()
+            )
+        } finally {
+            claudeSkillsDir.setWritable(true) // allow cleanup
+            home.deleteRecursively()
+            originalUserHome?.let { System.setProperty("user.home", it) }
+                ?: System.clearProperty("user.home")
+        }
+    }
+
     private fun newPluginAndProject(name: String): Pair<File, File> {
         val temp = File(myFixture.tempDirFixture.tempDirPath, "test-${System.nanoTime()}").apply { mkdirs() }
         val root = File(temp, name).apply { mkdirs() }

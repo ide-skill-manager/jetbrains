@@ -21,14 +21,14 @@ import dev.agentry.jetbrains.model.PluginManifest
 import dev.agentry.jetbrains.settings.AgentrySettings
 import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
 import dev.agentry.jetbrains.util.InputValidation
-import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.diagnostic.logger
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import javax.swing.tree.TreeNode
 
-private val log = Logger.getInstance("dev.agentry.jetbrains.actions.ComponentActions")
+private val log = logger<InstallComponentsAction>()
 
 /**
  * Actions that install / uninstall plugin components (skills, commands, hooks, MCP

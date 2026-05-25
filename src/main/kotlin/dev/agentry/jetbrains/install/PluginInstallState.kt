@@ -15,8 +15,9 @@ import java.nio.file.LinkOption
  * badge can't be spoofed and uninstall can't be tricked into walking out of the install root.
  *
  * Tracks the *primary* destination per scope only (`destFor`, not all of `destinationsFor`).
- * Partial dual-write loss (user manually deleted one of the two `.github/` + `.claude/`
- * agent files) leaves the install considered present as long as the primary survives —
+ * Partial dual-write loss (user manually deleted one of the dual-write siblings for any
+ * component type — agents at `.github/` + `.claude/`, skills at `.copilot/` + `.claude/`,
+ * etc.) leaves the install considered present as long as the primary survives —
  * documented in `docs/plans/install-target-picker.md`.
  */
 object PluginInstallState {
