@@ -15,9 +15,14 @@ import javax.swing.tree.TreeNode
  *
  * Why a `CheckboxTree`: the user can multi-select skills via checkboxes and then run a
  * single Install/Uninstall against the chosen set, instead of having to click each row
- * one at a time. IntelliJ's `CheckboxTree` already handles click-region detection and
- * keyboard toggling, so we just override [isCheckable] to suppress checkboxes on the
- * non-leaf rows (registry headers, orphan group header, root).
+ * one at a time.
+ *
+ * Only leaf rows (`Skill` / `Orphan` / `Component`) are checkable. Two layers enforce
+ * that: the renderer hides the checkbox on header rows for visual consistency, and
+ * [setNodeState] refuses toggles on non-leaves so click / keyboard / space all no-op on
+ * a header. Without the [setNodeState] override the helper would silently flip
+ * `isChecked` on a hidden checkbox — confusing for the user, and a tripwire for any
+ * future code that walks `isChecked` without filtering by node type.
  */
 class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null), NO_PROPAGATION_POLICY) {
 
@@ -25,6 +30,13 @@ class SkillTree : CheckboxTree(SkillTreeRenderer(), CheckedTreeNode(null), NO_PR
         isRootVisible = false
         showsRootHandles = true
         rowHeight = 0 // let the renderer dictate row heights (multi-line cells)
+    }
+
+    override fun setNodeState(node: CheckedTreeNode, checked: Boolean) {
+        if (node !is AgentryNode.Skill && node !is AgentryNode.Orphan && node !is AgentryNode.Component) {
+            return
+        }
+        super.setNodeState(node, checked)
     }
 
     /**
