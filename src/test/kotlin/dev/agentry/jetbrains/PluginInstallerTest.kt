@@ -254,8 +254,25 @@ class PluginInstallerTest : BasePlatformTestCase() {
                 File(root, "skills/here/SKILL.md"), emptyList())
         )
         PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
-        val locs = PluginInstallState.locationsOf(components.first(), manifest, projectDir.path)
-        assertEquals(setOf<InstallScope>(InstallScope.Project(projectDir)), locs)
+        val locs = PluginInstallState.locationsOf(components.first(), manifest, projectDir.absolutePath)
+        assertEquals(setOf<InstallScope>(InstallScope.Project(File(projectDir.absolutePath))), locs)
+    }
+
+    fun testLocationsOfReportsGlobalAfterGlobalInstall() {
+        // user.home is overridden to the fixture temp dir in setUp() (same pattern as
+        // testAgentInstallGlobalScopeNamespacesByPluginAndDualWrites).
+        val (root, _) = newPluginAndProject("loc-global")
+        File(root, "skills/g").mkdirs()
+        File(root, "skills/g/SKILL.md").writeText("---\nname: g\n---\n")
+        val manifest = manifest(root, "loc-global")
+        val components = listOf(
+            PluginComponent.Skill("g", File(root, "skills/g"),
+                File(root, "skills/g/SKILL.md"), emptyList())
+        )
+        PluginInstaller().installPlugin(manifest, components, InstallScope.Global)
+        // projectBasePath = null confirms the null-project case doesn't accidentally swallow Global.
+        val locs = PluginInstallState.locationsOf(components.first(), manifest, projectBasePath = null)
+        assertEquals(setOf<InstallScope>(InstallScope.Global), locs)
     }
 
     private fun newPluginAndProject(name: String): Pair<File, File> {

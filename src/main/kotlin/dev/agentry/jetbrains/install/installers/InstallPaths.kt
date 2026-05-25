@@ -60,7 +60,7 @@ internal object InstallPaths {
      * The first element is the **primary** destination — used as the return value of
      * [dev.agentry.jetbrains.install.PluginInstaller.installPlugin]'s `InstalledComponent`
      * (so reports / notifications cite one canonical path). All elements are written, all
-     * are checked by [dev.agentry.jetbrains.install.PluginInstallState.isInstalled], and
+     * are checked by [dev.agentry.jetbrains.install.PluginInstallState.locationsOf], and
      * all are removed on uninstall.
      */
     fun destinationsFor(
