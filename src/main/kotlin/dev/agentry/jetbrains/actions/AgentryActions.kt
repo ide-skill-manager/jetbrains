@@ -81,7 +81,7 @@ class InstallSkillAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         // Prefer pre-supplied name (e.g. selected list item from the tool window).
-        val name = (e.dataContext.getData(SKILL_NAME_DATA_KEY) as? String)?.trim()?.ifBlank { null }
+        val name = e.getData(SKILL_NAME_DATA_KEY)?.trim()?.ifBlank { null }
             ?: Messages.showInputDialog(
                 project, "Skill name to install:", "Agentry: install skill", null
             )?.trim()?.takeIf { it.isNotBlank() }
@@ -132,7 +132,7 @@ class RemoveSkillAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.EDT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val name = (e.dataContext.getData(SKILL_NAME_DATA_KEY) as? String)?.trim()?.ifBlank { null }
+        val name = e.getData(SKILL_NAME_DATA_KEY)?.trim()?.ifBlank { null }
             ?: Messages.showInputDialog(
                 project, "Skill name to remove:", "Agentry: remove skill", null
             )?.trim()?.takeIf { it.isNotBlank() }
@@ -167,8 +167,7 @@ class InstallSelectedAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        @Suppress("UNCHECKED_CAST")
-        val names = (e.dataContext.getData(SELECTED_SKILLS_DATA_KEY) as? List<String>).orEmpty()
+        val names = e.getData(SELECTED_SKILLS_DATA_KEY).orEmpty()
         if (names.isEmpty()) return
         BatchOperations.getInstance().installByNames(project, names)
     }
@@ -178,8 +177,7 @@ class UninstallSelectedAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        @Suppress("UNCHECKED_CAST")
-        val names = (e.dataContext.getData(SELECTED_SKILLS_DATA_KEY) as? List<String>).orEmpty()
+        val names = e.getData(SELECTED_SKILLS_DATA_KEY).orEmpty()
         if (names.isEmpty()) return
         BatchOperations.getInstance().uninstallByNames(project, names)
     }

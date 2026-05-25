@@ -39,8 +39,7 @@ class InstallComponentsAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        @Suppress("UNCHECKED_CAST")
-        val nodes = (e.dataContext.getData(SELECTED_COMPONENTS_DATA_KEY) as? List<AgentryNode.Component>).orEmpty()
+        val nodes = e.getData(SELECTED_COMPONENTS_DATA_KEY).orEmpty()
         if (nodes.isEmpty()) return
         runComponentOp(project, nodes, install = true)
     }
@@ -50,8 +49,7 @@ class UninstallComponentsAction : AnAction() {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        @Suppress("UNCHECKED_CAST")
-        val nodes = (e.dataContext.getData(SELECTED_COMPONENTS_DATA_KEY) as? List<AgentryNode.Component>).orEmpty()
+        val nodes = e.getData(SELECTED_COMPONENTS_DATA_KEY).orEmpty()
         if (nodes.isEmpty()) return
         runComponentOp(project, nodes, install = false)
     }

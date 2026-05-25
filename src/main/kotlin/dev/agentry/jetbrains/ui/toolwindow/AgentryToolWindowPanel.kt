@@ -1,6 +1,7 @@
 package dev.agentry.jetbrains.ui.toolwindow
 
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionUiKind
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.DataContext
@@ -240,12 +241,14 @@ class AgentryToolWindowPanel(private val project: Project) {
         }
         val dataContext = DataContext { dataId ->
             when (dataId) {
-                SELECTED_SKILLS_DATA_KEY -> skillNames
+                SELECTED_SKILLS_DATA_KEY.name -> skillNames
                 CommonDataKeys.PROJECT.name -> project
                 else -> null
             }
         }
-        val event = AnActionEvent.createFromDataContext("AgentryToolWindow", Presentation(), dataContext)
+        val event = AnActionEvent.createEvent(
+            dataContext, Presentation(), "AgentryToolWindow", ActionUiKind.NONE, null
+        )
         action.actionPerformed(event)
     }
 
@@ -260,12 +263,14 @@ class AgentryToolWindowPanel(private val project: Project) {
         }
         val dataContext = DataContext { dataId ->
             when (dataId) {
-                dev.agentry.jetbrains.actions.SELECTED_COMPONENTS_DATA_KEY -> components
+                dev.agentry.jetbrains.actions.SELECTED_COMPONENTS_DATA_KEY.name -> components
                 CommonDataKeys.PROJECT.name -> project
                 else -> null
             }
         }
-        val event = AnActionEvent.createFromDataContext("AgentryToolWindow", Presentation(), dataContext)
+        val event = AnActionEvent.createEvent(
+            dataContext, Presentation(), "AgentryToolWindow", ActionUiKind.NONE, null
+        )
         action.actionPerformed(event)
     }
 }
