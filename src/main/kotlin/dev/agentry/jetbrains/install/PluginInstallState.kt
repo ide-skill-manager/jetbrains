@@ -3,47 +3,40 @@ package dev.agentry.jetbrains.install
 import dev.agentry.jetbrains.install.installers.InstallPaths
 import dev.agentry.jetbrains.model.PluginComponent
 import dev.agentry.jetbrains.model.PluginManifest
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption
 
 /**
- * Cheap on-disk check of whether a plugin component is currently installed.
+ * Cheap on-disk check of where a plugin component is currently installed.
  *
- * The tree builder uses this to render "installed" badges per component. Tracks two
- * candidate scopes (Project + Global) and reports the first one that has files on disk.
+ * The tree builder uses [locationsOf] to render the `[U]` / `[P]` / `[U][P]` badge.
+ * Symlink-aware: a symlinked destination doesn't count — we want a true positive so the
+ * badge can't be spoofed and uninstall can't be tricked into walking out of the install root.
  *
- * Symlink-aware: a symlinked install destination (which a malicious project could pre-plant)
- * does **not** count as installed. We want a true positive signal so the badge can't be
- * spoofed and so uninstall can't be tricked into walking out of the install root.
- *
- * We don't keep a persistent record of *which* scope installed which component yet — that's
- * the spec's "scope persistence" open question. For now, real-file presence is the source
- * of truth.
+ * Tracks the *primary* destination per scope only (`destFor`, not all of `destinationsFor`).
+ * Partial dual-write loss (user manually deleted one of the two `.github/` + `.claude/`
+ * agent files) leaves the install considered present as long as the primary survives —
+ * documented in `docs/plans/install-target-picker.md`.
  */
 object PluginInstallState {
 
     /**
-     * Returns true if [component] appears installed for [plugin] in either Project (using
-     * [projectBasePath]) or Global scope. Used to populate `Component.installed` for the tree.
+     * The set of scopes [component] is currently installed in. Empty when not installed anywhere;
+     * one-element set when only project or user; two-element set when both.
      */
-    fun isInstalled(
+    fun locationsOf(
         component: PluginComponent,
         plugin: PluginManifest,
         projectBasePath: String?
-    ): Boolean {
-        val projectScope = projectBasePath?.let { InstallScope.Project(java.io.File(it)) }
-        return scopes(projectScope).any { scope ->
-            // A component with multiple destinations (e.g. Agent → `.github/` + `.claude/`)
-            // counts as installed if *any* dest is present. Avoids the "I removed one of two
-            // dual-written files manually; UI now says not-installed even though half is on disk"
-            // confusion — first thing the next install would do is overwrite the half-present file.
-            InstallPaths.destinationsFor(component, plugin, scope).any { dest ->
-                val p = dest.toPath()
-                Files.exists(p, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(p)
-            }
+    ): Set<InstallScope> {
+        val scopes = buildList<InstallScope> {
+            projectBasePath?.let { add(InstallScope.Project(File(it))) }
+            add(InstallScope.Global)
+        }
+        return scopes.filterTo(mutableSetOf()) { scope ->
+            val primary = InstallPaths.destFor(component, plugin, scope).toPath()
+            Files.exists(primary, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(primary)
         }
     }
-
-    private fun scopes(project: InstallScope.Project?): List<InstallScope> =
-        listOfNotNull(project, InstallScope.Global)
 }

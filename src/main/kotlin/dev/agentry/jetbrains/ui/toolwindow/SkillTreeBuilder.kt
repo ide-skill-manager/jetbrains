@@ -159,7 +159,7 @@ object SkillTreeBuilder {
         return byKind.map { (kind, items) ->
             val group = AgentryNode.ComponentGroup(kind, items.size)
             items.forEach { c ->
-                val installed = PluginInstallState.isInstalled(c, manifest, projectBasePath)
+                val installed = PluginInstallState.locationsOf(c, manifest, projectBasePath).isNotEmpty()
                 group.add(AgentryNode.Component(c, kind, installed))
             }
             group

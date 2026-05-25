@@ -2,6 +2,7 @@ package dev.agentry.jetbrains
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import dev.agentry.jetbrains.install.InstallScope
+import dev.agentry.jetbrains.install.PluginInstallState
 import dev.agentry.jetbrains.install.PluginInstaller
 import dev.agentry.jetbrains.model.ComponentKind
 import dev.agentry.jetbrains.model.ManifestDialect
@@ -228,6 +229,33 @@ class PluginInstallerTest : BasePlatformTestCase() {
         assertEquals(ComponentKind.SKILL, report.installed.single().kind)
         assertEquals(1, report.failed.size)
         assertEquals(ComponentKind.MCP_SERVER, report.failed.single().kind)
+    }
+
+    fun testLocationsOfEmptyWhenNothingInstalled() {
+        val (root, projectDir) = newPluginAndProject("loc-empty")
+        val manifest = manifest(root, "loc-empty")
+        val component = PluginComponent.Skill(
+            name = "untouched",
+            sourceDir = File(root, "skills/untouched"),
+            skillFile = File(root, "skills/untouched/SKILL.md"),
+            supportFiles = emptyList()
+        )
+        val locs = PluginInstallState.locationsOf(component, manifest, projectDir.absolutePath)
+        assertTrue("expected empty, got $locs", locs.isEmpty())
+    }
+
+    fun testLocationsOfReportsProjectAfterProjectInstall() {
+        val (root, projectDir) = newPluginAndProject("loc-proj")
+        File(root, "skills/here").mkdirs()
+        File(root, "skills/here/SKILL.md").writeText("---\nname: here\n---\n")
+        val manifest = manifest(root, "loc-proj")
+        val components = listOf(
+            PluginComponent.Skill("here", File(root, "skills/here"),
+                File(root, "skills/here/SKILL.md"), emptyList())
+        )
+        PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
+        val locs = PluginInstallState.locationsOf(components.first(), manifest, projectDir.path)
+        assertEquals(setOf<InstallScope>(InstallScope.Project(projectDir)), locs)
     }
 
     private fun newPluginAndProject(name: String): Pair<File, File> {
