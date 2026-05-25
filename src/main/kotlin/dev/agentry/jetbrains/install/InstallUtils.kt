@@ -2,9 +2,14 @@ package dev.agentry.jetbrains.install
 
 import dev.agentry.jetbrains.util.InputValidation
 import java.io.File
+import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
+import java.util.EnumSet
 
 /**
  * Split a markdown body into `(frontmatter-without-fences, body)` or `(null, body)` when
@@ -78,6 +83,68 @@ internal fun copySafe(source: File, dest: File) {
                 // Skip fifos / devices / sockets.
             }
         }
+    }
+}
+
+/**
+ * Recursively delete [root] without following symlinks into subdirectories.
+ *
+ * [File.deleteRecursively] uses [File.walkBottomUp] which treats a symlink-to-directory
+ * as a real directory and descends into it. If a malicious project plants a symlink INSIDE
+ * the install dir after install completes (e.g. `<project>/.claude/skills/foo/evil -> /home/user/data`),
+ * that function would traverse and delete files outside the install root.
+ *
+ * This implementation uses [Files.walkFileTree] without [java.nio.file.FileVisitOption.FOLLOW_LINKS],
+ * so symlinked directory entries are never descended into. A symlinked directory entry causes
+ * a [SecurityException] (logged by callers). Symlinked *files* are deleted as the symlink
+ * itself (NOFOLLOW_LINKS), which is safe — we remove the link, not its target.
+ *
+ * Returns `true` if [root] was fully removed; `false` (or throws) on any I/O error.
+ */
+internal fun deleteRecursivelySymlinkSafe(root: File): Boolean {
+    if (!root.exists() && !Files.isSymbolicLink(root.toPath())) return true
+    try {
+        Files.walkFileTree(
+            root.toPath(),
+            EnumSet.noneOf(java.nio.file.FileVisitOption::class.java), // NO FOLLOW_LINKS
+            Int.MAX_VALUE,
+            object : SimpleFileVisitor<java.nio.file.Path>() {
+                override fun preVisitDirectory(
+                    dir: java.nio.file.Path,
+                    attrs: BasicFileAttributes
+                ): FileVisitResult {
+                    // attrs here are for the entry itself (not the link target) because we
+                    // used no FOLLOW_LINKS. However, SimpleFileVisitor still reports a symlink-
+                    // to-directory via preVisitDirectory when it exists on the path. The safest
+                    // guard is to re-check with isSymbolicLink on entry.
+                    if (Files.isSymbolicLink(dir)) {
+                        throw SecurityException("Refusing to traverse symlink during delete: $dir")
+                    }
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun visitFile(
+                    file: java.nio.file.Path,
+                    attrs: BasicFileAttributes
+                ): FileVisitResult {
+                    // Deletes the symlink itself (not its target) for symlink-to-file entries.
+                    Files.delete(file)
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun postVisitDirectory(
+                    dir: java.nio.file.Path,
+                    exc: IOException?
+                ): FileVisitResult {
+                    if (exc != null) throw exc
+                    Files.delete(dir)
+                    return FileVisitResult.CONTINUE
+                }
+            }
+        )
+        return true
+    } catch (_: Throwable) {
+        return false
     }
 }
 

@@ -79,7 +79,8 @@ internal class SkillBundleInstaller : ComponentInstaller<PluginComponent.Skill> 
         } catch (e: Throwable) {
             written.forEach { dest ->
                 runCatching {
-                    if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
+                    val ok = if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
+                    if (!ok) log.warn("Rollback could not fully remove '$dest' — partial files may remain")
                 }.onFailure { cleanupErr ->
                     log.warn("Rollback failed to remove '$dest' after install error: ${cleanupErr.message}")
                 }

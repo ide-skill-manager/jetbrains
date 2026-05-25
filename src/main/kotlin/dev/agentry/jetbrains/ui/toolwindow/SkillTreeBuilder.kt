@@ -40,7 +40,7 @@ object SkillTreeBuilder {
     private val pluginManifestParser = PluginManifestParser()
     private val pluginScanner = PluginScanner()
 
-    fun build(target: InstallTarget, projectBasePath: String?): AgentryNode.Root {
+    fun build(projectBasePath: String?): AgentryNode.Root {
         val settings = AgentrySettings.getInstance()
         val sources = settings.registrySources.map {
             RegistrySource(it.url, it.ref, it.enabled, it.displayName)

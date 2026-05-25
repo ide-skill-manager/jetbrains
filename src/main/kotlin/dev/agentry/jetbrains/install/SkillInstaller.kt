@@ -74,24 +74,24 @@ class SkillInstaller {
                 if (!staging.renameTo(dest)) {
                     // Cross-filesystem fallback: copy then delete the staging tree.
                     staging.copyRecursively(dest, overwrite = false)
-                    if (!staging.deleteRecursively()) {
+                    if (!deleteRecursivelySymlinkSafe(staging)) {
                         log.warn("Failed to clean up '$staging' (leftover files may persist)")
                     }
                 }
             } catch (e: Throwable) {
                 // Roll back: nuke any half-written dest, restore backup if we had one.
-                if (!dest.deleteRecursively()) {
+                if (!deleteRecursivelySymlinkSafe(dest)) {
                     log.warn("Failed to clean up partial install '$dest' during rollback (leftover files may persist)")
                 }
                 if (backup.exists()) backup.renameTo(dest)
                 throw e
             }
             // Success: clean up backup.
-            if (backup.exists() && !backup.deleteRecursively()) {
+            if (backup.exists() && !deleteRecursivelySymlinkSafe(backup)) {
                 log.warn("Failed to clean up '$backup' (leftover files may persist)")
             }
         } catch (e: Throwable) {
-            if (!staging.deleteRecursively()) {
+            if (!deleteRecursivelySymlinkSafe(staging)) {
                 log.warn("Failed to clean up '$staging' (leftover files may persist)")
             }
             throw e
@@ -111,10 +111,10 @@ class SkillInstaller {
     ): Result<Unit> = runCatching {
         val dest = target.resolvePath(projectBasePath, skillName)
         if (dest.exists()) {
-            if (!dest.deleteRecursively()) {
+            if (!deleteRecursivelySymlinkSafe(dest)) {
                 throw IOException(
-                    "Failed to fully delete '$dest' (deleteRecursively returned false — likely a " +
-                    "permission or open-file issue; check the IDE log for I/O errors)"
+                    "Failed to fully delete '$dest' (deleteRecursivelySymlinkSafe returned false — likely a " +
+                    "permission, open-file, or symlink-traversal issue; check the IDE log for I/O errors)"
                 )
             }
             refreshVfs(dest.parentFile ?: dest)

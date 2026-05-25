@@ -154,12 +154,11 @@ class AgentryToolWindowPanel(private val project: Project) {
 
     /** Re-fetch + re-render. Runs in a background task; the UI is updated via invokeLater. */
     fun reloadEntries() {
-        val settings = AgentrySettings.getInstance()
         val basePath = project.basePath
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Agentry: loading skills", true) {
                 override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
-                    val root = SkillTreeBuilder.build(settings.defaultInstallTarget, basePath)
+                    val root = SkillTreeBuilder.build(basePath)
                     ApplicationManager.getApplication().invokeLater {
                         if (project.isDisposed) return@invokeLater
                         lastBuilt = root

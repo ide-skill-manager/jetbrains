@@ -459,6 +459,58 @@ class PluginInstallerTest : BasePlatformTestCase() {
     }
 
     // -------------------------------------------------------------------------
+    // Regression: uninstall must not traverse symlinks planted INSIDE install dir
+    // (Fixes 3 + 4 — shared deleteRecursivelySymlinkSafe helper)
+    // -------------------------------------------------------------------------
+
+    fun testUninstallDoesNotFollowSymlinkInsideInstallDir() {
+        // Real-FS temp directories so java.nio symlink APIs work.
+        val base = java.nio.file.Files.createTempDirectory("symlink-traverse-test").toFile()
+        try {
+            val projectDir = File(base, "proj").apply { mkdirs() }
+            val root = File(base, "plugin").apply { mkdirs() }
+            val outside = File(base, "outside-data").apply { mkdirs() }
+            val outsideFile = File(outside, "important.txt").apply { writeText("DO NOT DELETE") }
+
+            // Build the install dir and plant a real skill file.
+            val installDir = File(projectDir, ".claude/skills/dangerous").apply { mkdirs() }
+            File(installDir, "SKILL.md").writeText("real install file")
+
+            // Plant a symlink INSIDE the install dir pointing to the outside dir.
+            val planted = File(installDir, "exfil")
+            try {
+                java.nio.file.Files.createSymbolicLink(planted.toPath(), outside.toPath())
+            } catch (_: Throwable) {
+                return // FS doesn't allow symlinks; skip
+            }
+
+            val component = PluginComponent.Skill(
+                name = "dangerous",
+                sourceDir = installDir,
+                skillFile = File(installDir, "SKILL.md"),
+                supportFiles = emptyList()
+            )
+            val pluginManifest = manifest(root, "danger-test")
+
+            // Uninstall through the ComponentActions pipeline — exercises the
+            // deleteRecursivelySymlinkSafe helper introduced by Fix 3.
+            val report = uninstallComponents(
+                pluginManifest,
+                listOf(component),
+                InstallScope.Project(projectDir)
+            )
+
+            // EITHER the uninstall failed (refused to traverse symlink) OR it succeeded
+            // but left the file OUTSIDE the install root untouched. The key invariant is
+            // that the file outside the install dir survives.
+            assertTrue("outside file must survive uninstall", outsideFile.exists())
+            assertEquals("DO NOT DELETE", outsideFile.readText())
+        } finally {
+            base.deleteRecursively() // best-effort cleanup of test artifacts
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Fix 2: canonical-root containment check on the INSTALL path
     // -------------------------------------------------------------------------
 

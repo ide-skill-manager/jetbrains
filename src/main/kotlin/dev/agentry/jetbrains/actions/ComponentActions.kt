@@ -14,6 +14,7 @@ import com.intellij.openapi.project.Project
 import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.PluginInstallReport
 import dev.agentry.jetbrains.install.PluginInstaller
+import dev.agentry.jetbrains.install.deleteRecursivelySymlinkSafe
 import dev.agentry.jetbrains.install.installers.InstallPaths
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.PluginComponent
@@ -197,11 +198,11 @@ internal fun uninstallComponents(
                         "Refusing to delete: canonical path '$canonicalDest' escapes install root '$canonicalRoot'"
                     )
                 }
-                val ok = if (dest.isDirectory) dest.deleteRecursively() else dest.delete()
+                val ok = if (dest.isDirectory) deleteRecursivelySymlinkSafe(dest) else dest.delete()
                 if (!ok) {
                     throw IOException(
-                        "Failed to delete '$dest' (deleteRecursively returned false — likely a " +
-                        "permission or open-file issue; check the IDE log for I/O errors)"
+                        "Failed to delete '$dest' (deleteRecursivelySymlinkSafe returned false — likely a " +
+                        "permission, open-file, or symlink-traversal issue; check the IDE log for I/O errors)"
                     )
                 }
                 log.info("Uninstalled '${c.name}' from ${dest.absolutePath}")
