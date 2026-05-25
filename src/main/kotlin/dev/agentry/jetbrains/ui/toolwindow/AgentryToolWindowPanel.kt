@@ -26,6 +26,7 @@ import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.settings.AgentrySettings
 import java.awt.BorderLayout
+import java.io.File
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
@@ -262,16 +263,25 @@ class AgentryToolWindowPanel(private val project: Project) {
     }
 
     /**
-     * Resolve the picker's current selection to a concrete [InstallScope]. The settings
-     * fallback covers the brief window between combo model rebuilds where the selection
-     * could be null. The `?: ""` for `project.basePath` is defensive — `CLAUDE_USER`
-     * ignores the path entirely, and the combo omits `CLAUDE_PROJECT` when no project is
-     * open (so the path is always non-null when it matters).
+     * Resolve the picker's current selection to a concrete [InstallScope]. Mirrors the
+     * safety of [ComponentActions.resolveInstallScope]: if the picker is set to
+     * CLAUDE_PROJECT but the project has no base path (null or blank), fall back to
+     * Global rather than constructing InstallScope.Project(File("")) which would point
+     * at the JVM working directory.
+     *
+     * The settings fallback covers the brief window between combo model rebuilds where
+     * the selection could be null.
      */
     private fun pickedScope(): InstallScope {
         val target = installTargetCombo.selectedItem as? InstallTarget
             ?: AgentrySettings.getInstance().defaultInstallTarget
-        return target.toScope(project.basePath ?: "")
+        val basePath = project.basePath?.takeIf { it.isNotBlank() }
+        return when (target) {
+            InstallTarget.CLAUDE_USER -> InstallScope.Global
+            InstallTarget.CLAUDE_PROJECT ->
+                if (basePath != null) InstallScope.Project(File(basePath))
+                else InstallScope.Global
+        }
     }
 
     /**
