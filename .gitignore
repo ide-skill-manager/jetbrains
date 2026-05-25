@@ -16,6 +16,7 @@ temp:/
 # Components Agentry installs into THIS project when developers exercise the plugin
 # via `./gradlew runIde` and point it at a registry. These are dev artefacts, not source.
 .claude/
+.github/agents/
 .github/hooks/
 .github/mcp/
 .github/prompts/

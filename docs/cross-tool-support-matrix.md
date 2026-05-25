@@ -23,10 +23,11 @@ Maintained as the canonical reference for Agentry's install-target decisions.
 Legend: ✅ documented + works · ⚠️ documented but reported broken · ❌ not supported
 
 Footnotes:
-1. **`~/.copilot/skills/` on Copilot for JetBrains** is documented by the wiki <sup>[wiki]</sup> but
-   reported as not picked up in [microsoft/copilot-intellij-feedback#1517][issue-1517] on plugin
-   version 1.5.66-243. Whether this is a regression, a config issue, or a stale wiki entry is
-   unresolved as of 2026-05.
+1. **`~/.copilot/skills/` on Copilot for JetBrains** is documented by the wiki <sup>[wiki]</sup>
+   but reported broken in [microsoft/copilot-intellij-feedback#1517][issue-1517] on plugin
+   version 1.5.66-243 (a 2024.3-line build). Per user report (May 2026, **TODO cite**) GitHub
+   Copilot is ending support for JetBrains 2024.2 / 2024.3 — so the bug is effectively frozen on
+   the affected platform; behaviour on current 2025.1+ Copilot plugin builds is unverified.
 2. **Hook filename pattern** per the wiki is `*.hooks.json` (flat, plural extension) — *not*
    `hooks.json` inside a per-plugin subdirectory. Agentry's current `HookInstaller` writes the
    wrong pattern; tracked as a follow-up.

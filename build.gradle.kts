@@ -19,7 +19,7 @@ repositories {
 
 dependencies {
     intellijPlatform {
-        intellijIdeaCommunity("2024.3.6")
+        intellijIdeaCommunity("2025.1")
         pluginVerifier()
         zipSigner()
         testFramework(TestFrameworkType.Platform)
@@ -34,8 +34,8 @@ intellijPlatform {
         name = "Agentry"
         version = "0.1.0"
         ideaVersion {
-            sinceBuild = "241"
-            untilBuild = "243.*"
+            sinceBuild = "251"
+            untilBuild = "261.*"
         }
     }
     publishing {
@@ -47,32 +47,30 @@ intellijPlatform {
         password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
     }
     pluginVerification {
-        // Avoid `recommended()` — that resolves to the JetBrains-recommended set,
-        // which currently includes the unreleased 2025.3 and fails dependency resolution.
-        // Pin explicitly to the matrix CI actually runs against.
+        // Pin explicitly to the matrix CI actually runs against, rather than `recommended()`,
+        // so a new JetBrains release can't break the build without an intentional bump.
         ides {
-            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.1")
-            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.2")
-            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2024.3")
-            ide(IntelliJPlatformType.PyCharmCommunity, "2024.3")
-            ide(IntelliJPlatformType.WebStorm, "2024.3")
-            ide(IntelliJPlatformType.Rider, "2024.3")
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2025.1")
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2025.2")
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2025.3")
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2026.1")
+            ide(IntelliJPlatformType.PyCharmCommunity, "2026.1")
+            ide(IntelliJPlatformType.WebStorm, "2026.1")
+            ide(IntelliJPlatformType.Rider, "2026.1")
         }
     }
 }
 
 kotlin {
-    // Build with the modern toolchain but emit bytecode compatible with the oldest
-    // platform we support (since-build=241 ⇒ 2024.1 ⇒ JVM 17).
     jvmToolchain(21)
     compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 
 tasks {
