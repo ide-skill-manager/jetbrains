@@ -49,14 +49,20 @@ intellijPlatform {
     pluginVerification {
         // Pin explicitly to the matrix CI actually runs against, rather than `recommended()`,
         // so a new JetBrains release can't break the build without an intentional bump.
+        //
+        // `useInstaller = false` resolves the IDE from the IntelliJ Maven repository instead
+        // of the binary installer mirror. JetBrains stopped publishing GA tarballs at
+        // download.jetbrains.com for 2025.3+ (the default installer URL returns 404 for those
+        // versions), but the Maven artifacts are still available. Pinning the whole matrix to
+        // the Maven path keeps the resolver consistent across versions.
         ides {
-            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2025.1")
-            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2025.2")
-            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2025.3")
-            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2026.1")
-            ide(IntelliJPlatformType.PyCharmCommunity, "2026.1")
-            ide(IntelliJPlatformType.WebStorm, "2026.1")
-            ide(IntelliJPlatformType.Rider, "2026.1")
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2025.1", useInstaller = false)
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2025.2", useInstaller = false)
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2025.3", useInstaller = false)
+            ide(IntelliJPlatformType.IntellijIdeaCommunity, "2026.1", useInstaller = false)
+            ide(IntelliJPlatformType.PyCharmCommunity, "2026.1", useInstaller = false)
+            ide(IntelliJPlatformType.WebStorm, "2026.1", useInstaller = false)
+            ide(IntelliJPlatformType.Rider, "2026.1", useInstaller = false)
         }
     }
 }
