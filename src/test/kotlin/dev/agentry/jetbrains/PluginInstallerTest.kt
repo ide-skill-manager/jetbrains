@@ -8,6 +8,7 @@ import dev.agentry.jetbrains.actions.uninstallComponents
 import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.PluginInstallState
 import dev.agentry.jetbrains.install.PluginInstaller
+import dev.agentry.jetbrains.settings.AgentrySettings
 import dev.agentry.jetbrains.model.ComponentKind
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.ManifestDialect
@@ -331,10 +332,17 @@ class PluginInstallerTest : BasePlatformTestCase() {
     }
 
     fun testResolveInstallScopeFallsBackToSettingsWhenNoPicker() {
-        val ctx = DataContext { _ -> null }
-        val resolved = resolveInstallScope(ctx, "/tmp/proj")
-        // Settings default is CLAUDE_USER (per Task 2) → Global
-        assertEquals(InstallScope.Global, resolved)
+        val settings = AgentrySettings.getInstance()
+        val originalDefault = settings.defaultInstallTarget
+        try {
+            settings.defaultInstallTarget = InstallTarget.CLAUDE_USER
+            val ctx = DataContext { _ -> null }
+            val resolved = resolveInstallScope(ctx, "/tmp/proj")
+            // Settings default forced to CLAUDE_USER above → Global
+            assertEquals(InstallScope.Global, resolved)
+        } finally {
+            settings.defaultInstallTarget = originalDefault
+        }
     }
 
     fun testResolveInstallScopeFallsBackToGlobalWhenClaudeProjectButNoBasePath() {

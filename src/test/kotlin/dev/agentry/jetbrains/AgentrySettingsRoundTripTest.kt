@@ -69,14 +69,14 @@ class AgentrySettingsRoundTripTest : BasePlatformTestCase() {
     }
 
     fun testDefaultInstallTargetGetterFallsBackForUnknownState() {
-        // Covers the in-memory getter's `?: CLAUDE_USER` path — the state's string
-        // bypasses loadState (set directly), so only the getter's fallback applies.
+        // Covers the getter's `?: CLAUDE_USER` Elvis-fallback path specifically.
+        // We bypass loadState (which coerces unknown strings) by writing directly to the
+        // raw state field via getState(), so only the getter's fallback is exercised —
+        // not the loadState coercion already covered by testLoadStateCoercesUnknownTargetToClaudeUser.
         val settings = AgentrySettings.getInstance()
         val before = settings.state
         try {
-            settings.loadState(
-                AgentrySettings.State(defaultInstallTarget = "WAS_REMOVED_IN_NEXT_VERSION")
-            )
+            settings.getState().defaultInstallTarget = "WAS_REMOVED_IN_NEXT_VERSION"
             // Unknown enum value must not throw — fall back to CLAUDE_USER.
             assertEquals(InstallTarget.CLAUDE_USER, settings.defaultInstallTarget)
         } finally {

@@ -14,6 +14,12 @@ import java.nio.file.LinkOption
  * Symlink-aware: a symlinked destination doesn't count — we want a true positive so the
  * badge can't be spoofed and uninstall can't be tricked into walking out of the install root.
  *
+ * Canonical-containment guard: even if the leaf exists and is not itself a symlink, an
+ * intermediate directory (e.g. `<project>/.claude`) could be a symlink pointing outside the
+ * project. [locationsOf] resolves the canonical primary path and verifies it sits inside the
+ * scope's expected base, mirroring the symmetric guards in `uninstallComponents` and
+ * `SkillBundleInstaller`.
+ *
  * Tracks the *primary* destination per scope only (`destFor`, not all of `destinationsFor`).
  * Partial dual-write loss (user manually deleted one of the dual-write siblings for any
  * component type — agents at `.github/` + `.claude/`, skills at `.copilot/` + `.claude/`,
@@ -25,6 +31,12 @@ object PluginInstallState {
     /**
      * The set of scopes [component] is currently installed in. Empty when not installed anywhere;
      * one-element set when only project or user; two-element set when both.
+     *
+     * Only counts a scope as present when the primary destination (a) exists without
+     * `NOFOLLOW_LINKS`, (b) is not itself a symlink, **and** (c) its canonical path is
+     * contained within the scope's expected base directory. Condition (c) catches the
+     * intermediate-symlink spoof where `<project>/.claude` is a symlink to `/etc/` — the
+     * leaf could be a real file, yet the install is outside the project.
      */
     fun locationsOf(
         component: PluginComponent,
@@ -36,8 +48,20 @@ object PluginInstallState {
             add(InstallScope.Global)
         }
         return scopes.filterTo(mutableSetOf()) { scope ->
-            val primary = InstallPaths.destFor(component, plugin, scope).toPath()
-            Files.exists(primary, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(primary)
+            val primaryFile = InstallPaths.destFor(component, plugin, scope)
+            val primaryPath = primaryFile.toPath()
+            if (!Files.exists(primaryPath, LinkOption.NOFOLLOW_LINKS)) return@filterTo false
+            if (Files.isSymbolicLink(primaryPath)) return@filterTo false
+            // Canonical-containment: an intermediate symlink (e.g. <project>/.claude -> /etc/)
+            // would let the leaf exist somewhere outside the install root. Resolve canonical and
+            // verify it sits under the expected scope base.
+            val expectedRoot = when (scope) {
+                is InstallScope.Project -> scope.projectDir
+                is InstallScope.Global -> File(System.getProperty("user.home"))
+            }
+            val canonicalRoot = expectedRoot.canonicalFile.toPath()
+            val canonicalPrimary = primaryFile.canonicalFile.toPath()
+            canonicalPrimary.startsWith(canonicalRoot)
         }
     }
 }
