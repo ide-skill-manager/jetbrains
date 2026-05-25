@@ -90,7 +90,10 @@ internal fun copySafe(source: File, dest: File) {
 }
 
 /**
- * Recursively delete [root] without following symlinks into subdirectories.
+ * Recursively delete [root], **without traversing into symlinked directories**. Symlink
+ * entries to files are deleted as the links themselves (their targets are left alone).
+ * Only symlink-to-directory entries cause the deletion to fail — those would otherwise
+ * let an attacker direct the walk into a chosen location.
  *
  * [File.deleteRecursively] uses [File.walkBottomUp] which treats a symlink-to-directory
  * as a real directory and descends into it. If a malicious project plants a symlink INSIDE
@@ -98,13 +101,16 @@ internal fun copySafe(source: File, dest: File) {
  * that function would traverse and delete files outside the install root.
  *
  * This implementation uses [Files.walkFileTree] without [java.nio.file.FileVisitOption.FOLLOW_LINKS],
- * so symlinked directory entries are never descended into. Symlinked *files* are deleted as the symlink
- * itself (NOFOLLOW_LINKS), which is safe — we remove the link, not its target.
+ * so symlinked directory entries are never descended into.
  *
- * Returns `true` on full success, `false` on ANY failure — including a planted symlink
- * inside the tree, an I/O error, or a permission denial. Exceptions are caught internally
- * and never propagate; callers should treat a `false` return as a failure signal and check
- * the log for the cause.
+ * Returns `true` on full success; `false` on any failure (encountered symlinked directory,
+ * I/O error, permission denial). Exceptions are caught internally and converted to a
+ * `false` return — callers don't need to wrap calls in try/catch. The caught throwable
+ * is logged at `debug` level for diagnosis.
+ *
+ * Used by uninstall + rollback paths instead of [File.deleteRecursively], which uses
+ * `walkBottomUp` and treats a symlink-to-directory as a directory — potentially deleting
+ * files outside the intended install root.
  */
 internal fun deleteRecursivelySymlinkSafe(root: File): Boolean {
     if (!root.exists() && !Files.isSymbolicLink(root.toPath())) return true

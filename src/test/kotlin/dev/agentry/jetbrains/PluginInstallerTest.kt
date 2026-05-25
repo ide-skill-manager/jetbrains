@@ -562,6 +562,64 @@ class PluginInstallerTest : BasePlatformTestCase() {
     }
 
     // -------------------------------------------------------------------------
+    // Round 10: canonical-root check is Project-only; Global honours user symlinks
+    // -------------------------------------------------------------------------
+
+    fun testGlobalInstallSucceedsWhenHomeClaudeIsSymlinkedToAnotherDir() {
+        // Real-FS temp dir — symlinks need a real filesystem.
+        val base = java.nio.file.Files.createTempDirectory("global-symlink-test").toFile()
+        val originalUserHome = System.getProperty("user.home")
+        try {
+            // Set user.home to base/home, but symlink HOME/.claude → base/elsewhere/claude.
+            val homeDir = File(base, "home").apply { mkdirs() }
+            val elsewhere = File(base, "elsewhere/claude").apply { mkdirs() }
+            System.setProperty("user.home", homeDir.absolutePath)
+            val homeClaude = File(homeDir, ".claude")
+            try {
+                java.nio.file.Files.createSymbolicLink(homeClaude.toPath(), elsewhere.toPath())
+            } catch (_: Throwable) {
+                return // FS doesn't allow symlinks; skip
+            }
+
+            // Build a synthetic component + manifest and install at Global scope.
+            val root = File(base, "plugin-root").apply { mkdirs() }
+            File(root, "skills/foo").mkdirs()
+            File(root, "skills/foo/SKILL.md").writeText("---\nname: foo\n---\n")
+            val component = PluginComponent.Skill(
+                name = "foo",
+                sourceDir = File(root, "skills/foo"),
+                skillFile = File(root, "skills/foo/SKILL.md"),
+                supportFiles = emptyList()
+            )
+            val pluginManifest = manifest(root, "test-plugin")
+
+            val report = PluginInstaller().installPlugin(pluginManifest, listOf(component), InstallScope.Global)
+            assertTrue(
+                "global install succeeded even though ~/.claude is a symlink: ${report.failed.firstOrNull()?.reason}",
+                report.isFullSuccess
+            )
+            // The symlink target should contain the installed skill.
+            assertTrue(
+                "install landed via the symlink into elsewhere/claude",
+                File(elsewhere, "skills/foo/SKILL.md").exists()
+            )
+
+            // locationsOf must report Global as installed — the Global canonical-root skip
+            // is what makes this true even though canonicalFile of the dest resolves under
+            // base/elsewhere rather than base/home.
+            val locs = PluginInstallState.locationsOf(component, pluginManifest, projectBasePath = null)
+            assertTrue(
+                "Global must be in installedScopes despite symlinked ~/.claude, got: $locs",
+                InstallScope.Global in locs
+            )
+        } finally {
+            originalUserHome?.let { System.setProperty("user.home", it) }
+                ?: System.clearProperty("user.home")
+            base.deleteRecursively()
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Fix 3: rollback on partial dual-write failure
     // -------------------------------------------------------------------------
 

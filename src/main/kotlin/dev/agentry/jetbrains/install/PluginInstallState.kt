@@ -14,11 +14,13 @@ import java.nio.file.LinkOption
  * Symlink-aware: a symlinked destination doesn't count — we want a true positive so the
  * badge can't be spoofed and uninstall can't be tricked into walking out of the install root.
  *
- * Canonical-containment guard: even if the leaf exists and is not itself a symlink, an
- * intermediate directory (e.g. `<project>/.claude`) could be a symlink pointing outside the
- * project. [locationsOf] resolves the canonical primary path and verifies it sits inside the
- * scope's expected base, mirroring the symmetric guards in `uninstallComponents` and
- * `SkillBundleInstaller`.
+ * Canonical-containment guard (Project scope only): even if the leaf exists and is not itself
+ * a symlink, an intermediate directory (e.g. `<project>/.claude`) could be a symlink pointing
+ * outside the project. For [InstallScope.Project], [locationsOf] resolves the canonical primary
+ * path and verifies it sits inside the project dir. This guard is intentionally skipped for
+ * [InstallScope.Global]: users commonly symlink `~/.claude` or `~/.copilot` to a different
+ * filesystem (NAS, separate disk, `~/Library/...`), which is legitimate user-managed
+ * configuration. The leaf-is-not-symlink check still applies to both scopes.
  *
  * Tracks the *primary* destination per scope only (`destFor`, not all of `destinationsFor`).
  * Partial dual-write loss (user manually deleted one of the dual-write siblings for any
@@ -52,18 +54,20 @@ object PluginInstallState {
             val primaryPath = primaryFile.toPath()
             if (!Files.exists(primaryPath, LinkOption.NOFOLLOW_LINKS)) return@filterTo false
             if (Files.isSymbolicLink(primaryPath)) return@filterTo false
-            // Canonical-containment: an intermediate symlink (e.g. <project>/.claude -> /etc/)
-            // would let the leaf exist somewhere outside the install root. Resolve canonical and
-            // verify it sits under the expected scope base.
-            val expectedRoot = when (scope) {
-                is InstallScope.Project -> scope.projectDir
-                is InstallScope.Global -> File(System.getProperty("user.home"))
+            // Scope-appropriate intermediate-symlink defence:
+            //   - Project scope: project dir is untrusted (cloned repo, potential attacker-controlled
+            //     intermediate symlinks). Enforce canonical primary path under canonical projectDir.
+            //   - Global scope: user's own home — symlinking ~/.claude or ~/.copilot to a NAS,
+            //     separate disk, or ~/Library/... is legitimate user-managed configuration. Skip
+            //     the canonical-root check; the leaf-is-not-symlink check (above) still applies.
+            when (scope) {
+                is InstallScope.Project -> runCatching {
+                    val canonicalRoot = scope.projectDir.canonicalFile.toPath()
+                    val canonicalPrimary = primaryFile.canonicalFile.toPath()
+                    canonicalPrimary.startsWith(canonicalRoot)
+                }.getOrElse { false }
+                is InstallScope.Global -> true  // user-managed symlinks honoured
             }
-            runCatching {
-                val canonicalRoot = expectedRoot.canonicalFile.toPath()
-                val canonicalPrimary = primaryFile.canonicalFile.toPath()
-                canonicalPrimary.startsWith(canonicalRoot)
-            }.getOrElse { false }
         }
     }
 }

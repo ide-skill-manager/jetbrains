@@ -174,16 +174,19 @@ internal fun uninstallComponents(
         // aborts the whole component to avoid following the link outside the install root.
         val destinations = InstallPaths.destinationsFor(c, plugin, scope)
         runCatching {
-            // Build the expected install root from scope alone (no user input), and verify every
-            // canonical destination resolves under it. This catches intermediate-dir symlinks (e.g.
-            // <project>/.claude is itself a symlink to /) even though the leaf isn't a symlink.
+            // Scope-appropriate intermediate-symlink defence:
+            //   - Project scope: project dir comes from a possibly-untrusted source (cloned repo,
+            //     potential attacker-controlled intermediate symlinks). Enforce canonicalDest under
+            //     canonical projectDir.
+            //   - Global scope: the user's own home — symlinking ~/.claude or ~/.copilot to a NAS,
+            //     separate disk, or ~/Library/... is legitimate user-managed configuration. Skip the
+            //     canonical-root check; the leaf-is-not-symlink check (below) still applies.
             // Resolved INSIDE runCatching so an IOException here fails this component only —
             // the remaining components in the batch still get processed.
-            val expectedRoot: File = when (scope) {
-                is InstallScope.Project -> scope.projectDir
-                is InstallScope.Global -> File(System.getProperty("user.home"))
+            val canonicalRoot: File? = when (scope) {
+                is InstallScope.Project -> scope.projectDir.canonicalFile
+                is InstallScope.Global -> null  // user-managed symlinks honoured
             }
-            val canonicalRoot = expectedRoot.canonicalFile
             destinations.forEach { dest ->
                 val destPath = dest.toPath()
                 if (!Files.exists(destPath, LinkOption.NOFOLLOW_LINKS)) return@forEach
@@ -192,11 +195,14 @@ internal fun uninstallComponents(
                 }
                 // The canonical path collapses symlinks anywhere along the way; if it doesn't sit
                 // under the expected root, the dest reaches outside the install area and we refuse.
-                val canonicalDest = dest.canonicalFile
-                if (!canonicalDest.toPath().startsWith(canonicalRoot.toPath())) {
-                    throw SecurityException(
-                        "Refusing to delete: canonical path '$canonicalDest' escapes install root '$canonicalRoot'"
-                    )
+                // Only checked for Project scope — see comment above.
+                if (canonicalRoot != null) {
+                    val canonicalDest = dest.canonicalFile
+                    if (!canonicalDest.toPath().startsWith(canonicalRoot.toPath())) {
+                        throw SecurityException(
+                            "Refusing to delete: canonical path '$canonicalDest' escapes install root '$canonicalRoot'"
+                        )
+                    }
                 }
                 val ok = if (dest.isDirectory) deleteRecursivelySymlinkSafe(dest) else dest.delete()
                 if (!ok) {

@@ -47,24 +47,24 @@ internal class SkillBundleInstaller : ComponentInstaller<PluginComponent.Skill> 
                 "Resolved skill dest escapes install root: $dest (root=$root)"
             }
         }
-        // Second containment check — intermediate-symlink defence: InputValidation.isInsideDir
-        // (above) already compares canonical paths, so it catches dest-name traversal attacks.
-        // However, even if each dest is "inside" its computed install root, an intermediate
-        // directory symlink (e.g. <project>/.claude -> /etc/) makes the install root itself
-        // escape the expected project or home base. The check below re-resolves the canonical
-        // path against the *scope-derived* base (projectDir or user.home) — not the install
-        // sub-root — to catch that class of escape.
-        val expectedRoot: File = when (scope) {
-            is InstallScope.Project -> scope.projectDir
-            is InstallScope.Global -> File(System.getProperty("user.home"))
+        // Scope-appropriate intermediate-symlink defence:
+        //   - Project scope: project dir is untrusted (cloned repo, potential attacker-controlled
+        //     intermediate symlinks). Enforce canonicalDest under canonical projectDir.
+        //   - Global scope: user's own home — symlinking ~/.claude to a NAS or other disk is
+        //     a legitimate, user-managed configuration. Skip the canonical-root check; the
+        //     leaf-is-not-symlink check (enforced inside copySafe) is still enforced.
+        val canonicalRoot: java.nio.file.Path? = when (scope) {
+            is InstallScope.Project -> runCatching { scope.projectDir.canonicalFile.toPath() }.getOrNull()
+            is InstallScope.Global -> null  // user-managed symlinks honoured
         }
-        val canonicalRoot = expectedRoot.canonicalFile
-        destinations.forEach { dest ->
-            val canonicalDest = dest.canonicalFile
-            if (!canonicalDest.toPath().startsWith(canonicalRoot.toPath())) {
-                throw SecurityException(
-                    "Refusing to install: canonical path '$canonicalDest' escapes install root '$canonicalRoot'"
-                )
+        if (canonicalRoot != null) {
+            destinations.forEach { dest ->
+                val canonicalDest = runCatching { dest.canonicalFile.toPath() }.getOrNull()
+                if (canonicalDest == null || !canonicalDest.startsWith(canonicalRoot)) {
+                    throw SecurityException(
+                        "Refusing to install: canonical path '$dest' escapes install root '$canonicalRoot'"
+                    )
+                }
             }
         }
         // Multi-destination install with rollback: if any destination fails after earlier
