@@ -205,11 +205,12 @@ private val NO_PROPAGATION_POLICY = CheckboxTreeBase.CheckPolicy(
 )
 
 /**
- * Renders one row in the [SkillTree]. Three row layouts:
+ * Renders one row in the [SkillTree]. Four row layouts:
  *
  *   Registry  →  `▶  example-skills @ main   (3 skills)  ✓ enabled`
- *   Skill     →  `[ ] Code Reviewer   v1.0.0    installed`
- *   Orphan    →  `[ ] legacy-formatter   v0.4.2    orphaned`
+ *   Skill     →  `[ ] Code Reviewer  [U][P]  v1.0.0  Reviews a diff for bugs…`
+ *   Component →  `[ ] code-reviewer  [U]  Reviews a diff for bugs…`
+ *   Orphan    →  `[ ] legacy-formatter  [P]  v0.4.2  orphaned`
  *
  * Theme colors flow through `JBColor`/`SimpleTextAttributes` so the cell adapts to
  * light/dark themes.
