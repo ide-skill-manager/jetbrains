@@ -68,7 +68,9 @@ class AgentrySettingsRoundTripTest : BasePlatformTestCase() {
         }
     }
 
-    fun testDefaultInstallTargetFallsBackOnUnknownString() {
+    fun testDefaultInstallTargetGetterFallsBackForUnknownState() {
+        // Covers the in-memory getter's `?: CLAUDE_USER` path — the state's string
+        // bypasses loadState (set directly), so only the getter's fallback applies.
         val settings = AgentrySettings.getInstance()
         val before = settings.state
         try {
@@ -88,12 +90,15 @@ class AgentrySettingsRoundTripTest : BasePlatformTestCase() {
     }
 
     fun testLoadStateCoercesUnknownTargetToClaudeUser() {
+        // Covers the persistence-boundary coercion in loadState — verifies that the
+        // raw state field itself is normalised (not just the typed accessor).
         val settings = AgentrySettings.getInstance()
         val before = settings.state
         try {
             val stale = AgentrySettings.State().apply { defaultInstallTarget = "AGENTRY_CACHE" }
             settings.loadState(stale)
-            assertEquals("CLAUDE_USER", settings.getState().defaultInstallTarget)
+            assertEquals("CLAUDE_USER", settings.state.defaultInstallTarget)
+            //                          ^^^^^^^^^^^^^^^ raw field, not typed accessor
         } finally {
             settings.loadState(before)
         }
@@ -103,9 +108,11 @@ class AgentrySettingsRoundTripTest : BasePlatformTestCase() {
         val settings = AgentrySettings.getInstance()
         val before = settings.state
         try {
-            val state = AgentrySettings.State().apply { defaultInstallTarget = "CLAUDE_PROJECT" }
+            val state = AgentrySettings.State().apply {
+                defaultInstallTarget = InstallTarget.CLAUDE_PROJECT.name
+            }
             settings.loadState(state)
-            assertEquals("CLAUDE_PROJECT", settings.getState().defaultInstallTarget)
+            assertEquals(InstallTarget.CLAUDE_PROJECT.name, settings.state.defaultInstallTarget)
         } finally {
             settings.loadState(before)
         }
