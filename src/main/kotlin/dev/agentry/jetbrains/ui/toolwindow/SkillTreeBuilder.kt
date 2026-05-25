@@ -62,7 +62,7 @@ object SkillTreeBuilder {
             root.add(registryNode)
         }
 
-        addOrphans(root, installer.listInstalled(target, projectBasePath).map { it }, sources, projectBasePath)
+        addOrphans(root, listInstalledAcrossScopes(installer, projectBasePath), sources, projectBasePath)
         return root
     }
 
@@ -191,21 +191,55 @@ object SkillTreeBuilder {
             .toSet()
         val orphans = installed.filter { it.manifest.name !in knownNames }
         if (orphans.isEmpty()) return
-        val group = AgentryNode.OrphanGroup(orphans.size)
         val basePath = projectBasePath?.takeIf { it.isNotBlank() }
-        orphans.forEach { orphan ->
-            // Use the recorded install target rather than a path-prefix heuristic. A path
-            // prefix check misclassifies CLAUDE_USER installs when the project root happens
-            // to be a parent of the home directory (e.g. the user opened ~/ as a project).
-            val scope: InstallScope = when (orphan.target) {
-                InstallTarget.CLAUDE_USER -> InstallScope.Global
-                InstallTarget.CLAUDE_PROJECT ->
-                    if (basePath != null) InstallScope.Project(File(basePath))
-                    else InstallScope.Global  // shouldn't be reachable; defensive fallback
-            }
-            group.add(AgentryNode.Orphan(orphan, installedScopes = setOf(scope)))
+        // Merge orphans by skill name so a skill installed at both CLAUDE_USER and
+        // CLAUDE_PROJECT produces ONE row with installedScopes covering both targets,
+        // rather than two confusingly duplicate rows in the tree.
+        val grouped: Map<String, List<dev.agentry.jetbrains.model.InstalledSkill>> =
+            orphans.groupBy { it.manifest.name }
+        val group = AgentryNode.OrphanGroup(grouped.size)
+        grouped.forEach { (_, entries) ->
+            val scopes: Set<InstallScope> = entries.map { entry ->
+                // Use the recorded install target rather than a path-prefix heuristic. A
+                // path prefix check misclassifies CLAUDE_USER installs when the project
+                // root happens to be a parent of the home directory (e.g. ~/  as project).
+                when (entry.target) {
+                    InstallTarget.CLAUDE_USER -> InstallScope.Global
+                    InstallTarget.CLAUDE_PROJECT ->
+                        if (basePath != null) InstallScope.Project(File(basePath))
+                        else InstallScope.Global  // defensive fallback; basePath checked above
+                }
+            }.toSet()
+            // Use the first entry as the representative InstalledSkill (they share name +
+            // manifest; the location field differs but uninstall actions resolve it per-scope
+            // through the action's own resolveInstallScope logic).
+            group.add(AgentryNode.Orphan(entries.first(), installedScopes = scopes))
         }
         root.add(group)
+    }
+
+    /**
+     * Query installed skills at BOTH [InstallTarget.CLAUDE_USER] and
+     * [InstallTarget.CLAUDE_PROJECT] and return them as a flat list. The returned entries
+     * each carry their own [dev.agentry.jetbrains.model.InstalledSkill.target] field, so
+     * callers can distinguish which scope each entry came from.
+     *
+     * Used by [build] to feed [addOrphans] so that orphan discovery isn't limited to
+     * whichever single target the tree was opened with — e.g. a skill installed at
+     * [InstallTarget.CLAUDE_PROJECT] while the default target is [InstallTarget.CLAUDE_USER]
+     * will still surface as an orphan.
+     */
+    private fun listInstalledAcrossScopes(
+        installer: SkillInstaller,
+        projectBasePath: String?
+    ): List<dev.agentry.jetbrains.model.InstalledSkill> {
+        val basePath = projectBasePath?.takeIf { it.isNotBlank() }
+        val all = mutableListOf<dev.agentry.jetbrains.model.InstalledSkill>()
+        all += installer.listInstalled(InstallTarget.CLAUDE_USER, basePath)
+        if (basePath != null) {
+            all += installer.listInstalled(InstallTarget.CLAUDE_PROJECT, basePath)
+        }
+        return all
     }
 
     /**

@@ -59,7 +59,7 @@ class AgentryToolWindowPanel(private val project: Project) {
             // selection — filtering the model is the reliable guarantee. If the project opens/
             // closes mid-tool-window-life (rare), the user will see the missing entry until the
             // tool window is reopened; acceptable for v0.1.2.
-            if (project.basePath != null) InstallTarget.values()
+            if (project.basePath?.isNotBlank() == true) InstallTarget.values()
             else arrayOf(InstallTarget.CLAUDE_USER)
         )
 
@@ -264,7 +264,7 @@ class AgentryToolWindowPanel(private val project: Project) {
 
     /**
      * Resolve the picker's current selection to a concrete [InstallScope]. Mirrors the
-     * safety of [ComponentActions.resolveInstallScope]: if the picker is set to
+     * safety of [dev.agentry.jetbrains.actions.resolveInstallScope]: if the picker is set to
      * CLAUDE_PROJECT but the project has no base path (null or blank), fall back to
      * Global rather than constructing InstallScope.Project(File("")) which would point
      * at the JVM working directory.
