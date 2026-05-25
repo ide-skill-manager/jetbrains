@@ -57,7 +57,7 @@ object SkillTreeBuilder {
         val root = AgentryNode.Root()
         sources.forEach { source ->
             val cloneDir = registry.localDirFor(source)
-            val registryNode = buildRegistryNode(source, cloneDir, installedSkillNames, projectBasePath)
+            val registryNode = buildRegistryNode(source, cloneDir, installedSkillNames, target, projectBasePath)
             root.add(registryNode)
         }
 
@@ -69,6 +69,7 @@ object SkillTreeBuilder {
         source: RegistrySource,
         cloneDir: File,
         installedSkillNames: Set<String>,
+        target: InstallTarget,
         projectBasePath: String?
     ): AgentryNode.Registry {
         // 1. Marketplace catalog?
@@ -110,7 +111,7 @@ object SkillTreeBuilder {
                 AgentryNode.Skill(
                     m,
                     installedScopes = if (m.name in installedSkillNames)
-                        setOf<InstallScope>(InstallScope.Project(File(projectBasePath ?: "")))
+                        setOf(target.toScope(projectBasePath))
                     else emptySet()
                 )
             )
@@ -196,9 +197,11 @@ object SkillTreeBuilder {
         val group = AgentryNode.OrphanGroup(orphans.size)
         orphans.forEach { orphan ->
             // Orphans came from disk; their on-disk location tells us the scope.
-            val scope: InstallScope = if (projectBasePath != null && orphan.location.absolutePath.startsWith(projectBasePath))
-                InstallScope.Project(File(projectBasePath))
-            else InstallScope.Global
+            // Use component-based Path.startsWith to avoid "/proj-other" matching "/proj".
+            val scope: InstallScope = if (projectBasePath != null
+                    && orphan.location.toPath().startsWith(File(projectBasePath).toPath())
+                ) InstallScope.Project(File(projectBasePath))
+                else InstallScope.Global
             group.add(AgentryNode.Orphan(orphan, installedScopes = setOf(scope)))
         }
         root.add(group)
