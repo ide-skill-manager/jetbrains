@@ -6,6 +6,7 @@ import com.intellij.ui.CheckboxTreeBase
 import com.intellij.ui.CheckedTreeNode
 import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
+import dev.agentry.jetbrains.install.InstallScope
 import javax.swing.JTree
 import javax.swing.tree.DefaultTreeModel
 import javax.swing.tree.TreeNode
@@ -269,15 +270,13 @@ private class SkillTreeRenderer : CheckboxTree.CheckboxTreeCellRenderer(/*opaque
 
     private fun renderComponent(node: AgentryNode.Component) {
         textRenderer.append(node.name, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-        val desc = describeComponent(node.component)
+        val tag = scopeTag(node.installedScopes)
+        if (tag.isNotEmpty()) {
+            textRenderer.append("  $tag", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, successFg()))
+        }
+        val desc = describeComponent(node.component).take(120)
         if (desc.isNotBlank()) {
             textRenderer.append("  $desc", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-        }
-        if (node.installed) {
-            textRenderer.append(
-                "  installed",
-                SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, successFg())
-            )
         }
     }
 
@@ -310,17 +309,13 @@ private class SkillTreeRenderer : CheckboxTree.CheckboxTreeCellRenderer(/*opaque
     }
 
     private fun renderSkill(node: AgentryNode.Skill) {
-        val display = StringUtil.notNullize(
-            node.manifest.displayName.ifBlank { node.manifest.name }
-        )
+        val display = StringUtil.notNullize(node.manifest.displayName.ifBlank { node.manifest.name })
         textRenderer.append(display, SimpleTextAttributes.REGULAR_ATTRIBUTES)
-        textRenderer.append("  v${node.manifest.version}  ", SimpleTextAttributes.GRAYED_ATTRIBUTES)
-        if (node.installed) {
-            textRenderer.append(
-                "installed",
-                SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, successFg())
-            )
+        val tag = scopeTag(node.installedScopes)
+        if (tag.isNotEmpty()) {
+            textRenderer.append("  $tag", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, successFg()))
         }
+        textRenderer.append("  v${node.manifest.version}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
         val desc = node.manifest.description.take(120)
         if (desc.isNotBlank()) {
             textRenderer.append("   ${desc}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
@@ -337,6 +332,10 @@ private class SkillTreeRenderer : CheckboxTree.CheckboxTreeCellRenderer(/*opaque
 
     private fun renderOrphan(node: AgentryNode.Orphan) {
         textRenderer.append(node.name, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+        val tag = scopeTag(node.installedScopes)
+        if (tag.isNotEmpty()) {
+            textRenderer.append("  $tag", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, successFg()))
+        }
         textRenderer.append("  v${node.installed.manifest.version}  ", SimpleTextAttributes.GRAYED_ATTRIBUTES)
         textRenderer.append(
             "orphaned",
@@ -346,5 +345,10 @@ private class SkillTreeRenderer : CheckboxTree.CheckboxTreeCellRenderer(/*opaque
 
     private fun successFg() = JBColor(java.awt.Color(0, 128, 0), java.awt.Color(120, 200, 120))
     private fun pluralize(word: String, n: Int): String = if (n == 1) word else "${word}s"
+}
+
+private fun scopeTag(installedScopes: Set<InstallScope>): String = buildString {
+    if (installedScopes.any { it is InstallScope.Global }) append("[U]")
+    if (installedScopes.any { it is InstallScope.Project }) append("[P]")
 }
 
