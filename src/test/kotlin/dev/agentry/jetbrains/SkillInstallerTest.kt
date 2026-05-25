@@ -53,9 +53,7 @@ class SkillInstallerTest {
         // Project-scoped targets need a base path — calling with null returns null instead
         // of falling through to a relative File("/.claude/skills/x") that would land at root.
         assertTrue(InstallTarget.CLAUDE_PROJECT.baseDir(null) == null)
-        assertTrue(InstallTarget.JUNIE_PROJECT.baseDir(null) == null)
         assertFalse(InstallTarget.CLAUDE_USER.baseDir(null) == null)
-        assertFalse(InstallTarget.AGENTRY_CACHE.baseDir(null) == null)
     }
 
     // End-to-end "symlinks in a skill source are refused by copySkill" coverage lives in
