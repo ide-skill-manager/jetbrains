@@ -15,6 +15,26 @@
         </ul>
     ]]></description>
     <change-notes><![CDATA[
+        <b>0.1.2</b>
+        <ul>
+          <li>Default install target flips from <code>CLAUDE_PROJECT</code> to <code>CLAUDE_USER</code> — new
+              installs land under <code>~/.claude/</code> instead of the open project. Existing users
+              keep their persisted setting.</li>
+          <li>Tool-window footer gains an <code>Install to: [User ▾]</code> picker so individual
+              install / uninstall clicks can target user OR project scope without
+              round-tripping through Settings.</li>
+          <li>Tree rows show install location as a compact <code>[U]</code> / <code>[P]</code> / <code>[U][P]</code> badge,
+              placed immediately after the name so long descriptions can't push it off the
+              right edge.</li>
+          <li>Install is additive (installing at one scope never removes from the other);
+              uninstall is per-scope.</li>
+          <li><code>InstallTarget</code> enum trimmed to <code>CLAUDE_USER</code> + <code>CLAUDE_PROJECT</code>; persisted
+              values for the removed <code>AGENTRY_CACHE</code> and <code>JUNIE_PROJECT</code> coerce to
+              <code>CLAUDE_USER</code> on load.</li>
+          <li>Fix: <code>ComponentActions</code> previously hardcoded <code>InstallScope.Project</code> whenever
+              a project was open, ignoring the user-target setting entirely. Now reads the
+              picker.</li>
+        </ul>
         <b>0.1.1</b>
         <ul>
           <li>Address Marketplace verifier warnings:
