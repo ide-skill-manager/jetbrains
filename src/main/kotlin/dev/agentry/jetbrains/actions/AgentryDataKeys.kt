@@ -2,6 +2,7 @@ package dev.agentry.jetbrains.actions
 
 import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.util.messages.Topic
+import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
 
 /**
@@ -39,8 +40,7 @@ val SELECTED_COMPONENTS_DATA_KEY: DataKey<List<AgentryNode.Component>> =
  * `AgentrySettings.defaultInstallTarget` for CLI / agent-fired paths that never populate
  * the data context.
  */
-val INSTALL_TARGET_DATA_KEY: DataKey<dev.agentry.jetbrains.model.InstallTarget> =
-    DataKey.create("AgentryInstallTarget")
+val INSTALL_TARGET_DATA_KEY: DataKey<InstallTarget> = DataKey.create("AgentryInstallTarget")
 
 fun interface SkillsChangedListener {
     fun skillsChanged()

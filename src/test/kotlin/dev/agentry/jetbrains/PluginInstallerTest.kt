@@ -1,10 +1,14 @@
 package dev.agentry.jetbrains
 
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import dev.agentry.jetbrains.actions.INSTALL_TARGET_DATA_KEY
+import dev.agentry.jetbrains.actions.resolveInstallScope
 import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.PluginInstallState
 import dev.agentry.jetbrains.install.PluginInstaller
 import dev.agentry.jetbrains.model.ComponentKind
+import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.ManifestDialect
 import dev.agentry.jetbrains.model.PluginAuthor
 import dev.agentry.jetbrains.model.PluginComponent
@@ -280,30 +284,34 @@ class PluginInstallerTest : BasePlatformTestCase() {
     // -------------------------------------------------------------------------
 
     fun testResolveInstallScopeReturnsGlobalWhenPickerSetsClaudeUser() {
-        val ctx = com.intellij.openapi.actionSystem.DataContext { id ->
-            if (id == dev.agentry.jetbrains.actions.INSTALL_TARGET_DATA_KEY.name)
-                dev.agentry.jetbrains.model.InstallTarget.CLAUDE_USER
-            else null
+        val ctx = DataContext { id ->
+            if (id == INSTALL_TARGET_DATA_KEY.name) InstallTarget.CLAUDE_USER else null
         }
-        val resolved = dev.agentry.jetbrains.actions.resolveInstallScope(ctx, "/tmp/proj")
-        assertEquals(dev.agentry.jetbrains.install.InstallScope.Global, resolved)
+        val resolved = resolveInstallScope(ctx, "/tmp/proj")
+        assertEquals(InstallScope.Global, resolved)
     }
 
     fun testResolveInstallScopeReturnsProjectWhenPickerSetsClaudeProject() {
-        val ctx = com.intellij.openapi.actionSystem.DataContext { id ->
-            if (id == dev.agentry.jetbrains.actions.INSTALL_TARGET_DATA_KEY.name)
-                dev.agentry.jetbrains.model.InstallTarget.CLAUDE_PROJECT
-            else null
+        val ctx = DataContext { id ->
+            if (id == INSTALL_TARGET_DATA_KEY.name) InstallTarget.CLAUDE_PROJECT else null
         }
-        val resolved = dev.agentry.jetbrains.actions.resolveInstallScope(ctx, "/tmp/proj")
-        assertEquals(dev.agentry.jetbrains.install.InstallScope.Project(java.io.File("/tmp/proj")), resolved)
+        val resolved = resolveInstallScope(ctx, "/tmp/proj")
+        assertEquals(InstallScope.Project(File("/tmp/proj")), resolved)
     }
 
     fun testResolveInstallScopeFallsBackToSettingsWhenNoPicker() {
-        val ctx = com.intellij.openapi.actionSystem.DataContext { _ -> null }
-        val resolved = dev.agentry.jetbrains.actions.resolveInstallScope(ctx, "/tmp/proj")
+        val ctx = DataContext { _ -> null }
+        val resolved = resolveInstallScope(ctx, "/tmp/proj")
         // Settings default is CLAUDE_USER (per Task 2) → Global
-        assertEquals(dev.agentry.jetbrains.install.InstallScope.Global, resolved)
+        assertEquals(InstallScope.Global, resolved)
+    }
+
+    fun testResolveInstallScopeFallsBackToGlobalWhenClaudeProjectButNoBasePath() {
+        val ctx = DataContext { id ->
+            if (id == INSTALL_TARGET_DATA_KEY.name) InstallTarget.CLAUDE_PROJECT else null
+        }
+        val resolved = resolveInstallScope(ctx, null)
+        assertEquals(InstallScope.Global, resolved)
     }
 
     private fun newPluginAndProject(name: String): Pair<File, File> {

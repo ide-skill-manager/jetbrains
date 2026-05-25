@@ -56,7 +56,14 @@ internal fun resolveInstallScope(
         InstallTarget.CLAUDE_USER -> InstallScope.Global
         InstallTarget.CLAUDE_PROJECT ->
             if (projectBasePath != null) target.toScope(projectBasePath)
-            else InstallScope.Global
+            else {
+                com.intellij.openapi.diagnostic.Logger.getInstance(
+                    "dev.agentry.jetbrains.actions.ComponentActions"
+                ).warn(
+                    "resolveInstallScope: CLAUDE_PROJECT requested but no project base path; falling back to Global"
+                )
+                InstallScope.Global
+            }
     }
 }
 
@@ -66,7 +73,8 @@ class InstallComponentsAction : AnAction() {
         val project = e.project ?: return
         val nodes = e.getData(SELECTED_COMPONENTS_DATA_KEY).orEmpty()
         if (nodes.isEmpty()) return
-        runComponentOp(e, project, nodes, install = true)
+        val scope = resolveInstallScope(e.dataContext, project.basePath)
+        runComponentOp(scope, project, nodes, install = true)
     }
 }
 
@@ -76,7 +84,8 @@ class UninstallComponentsAction : AnAction() {
         val project = e.project ?: return
         val nodes = e.getData(SELECTED_COMPONENTS_DATA_KEY).orEmpty()
         if (nodes.isEmpty()) return
-        runComponentOp(e, project, nodes, install = false)
+        val scope = resolveInstallScope(e.dataContext, project.basePath)
+        runComponentOp(scope, project, nodes, install = false)
     }
 }
 
@@ -85,14 +94,13 @@ class UninstallComponentsAction : AnAction() {
  * selected components by their parent plugin manifest, dispatches one batch per plugin,
  * aggregates results into a single end-of-task notification, and publishes SKILLS_CHANGED.
  */
-private fun runComponentOp(e: AnActionEvent, project: Project, nodes: List<AgentryNode.Component>, install: Boolean) {
+private fun runComponentOp(scope: InstallScope, project: Project, nodes: List<AgentryNode.Component>, install: Boolean) {
     val verb = if (install) "install" else "uninstall"
     val title = "Agentry: ${verb}ing ${nodes.size} component(s)"
     ProgressManager.getInstance().run(
         object : Task.Backgroundable(project, title, true) {
             override fun run(indicator: ProgressIndicator) {
                 indicator.isIndeterminate = false
-                val scope: InstallScope = resolveInstallScope(e.dataContext, project.basePath)
                 val byPlugin: Map<PluginManifest, List<AgentryNode.Component>> = nodes
                     .mapNotNull { node -> node.parentPluginManifest()?.let { it to node } }
                     .groupBy({ it.first }, { it.second })
