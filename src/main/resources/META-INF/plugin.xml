@@ -15,6 +15,22 @@
         </ul>
     ]]></description>
     <change-notes><![CDATA[
+        <b>0.1.1</b>
+        <ul>
+          <li>Address Marketplace verifier warnings:
+              switch the CLI command-name declaration from the deprecated
+              <code>ApplicationStarter.commandName</code> override to the EP's
+              <code>id</code> attribute;
+              pass an explicit <code>CheckPolicy</code> to <code>CheckboxTree</code> (the
+              2-arg constructor was deprecated in 2025.3);
+              fire tool-window actions through
+              <code>ActionUtil.performActionDumbAwareWithCallbacks</code> instead of calling
+              the override-only <code>AnAction.actionPerformed</code> directly.
+              (One verifier warning is unavoidable until <code>sinceBuild</code> moves to
+              253 — <code>CheckboxTreeCellRendererBase.getCheckbox()</code> is deprecated
+              on 2025.3+ in favour of <code>threeStateCheckBox</code>, which doesn't exist
+              on 2025.1/2.)</li>
+        </ul>
         <b>0.1.0</b>
         <ul>
           <li>Initial release: manifest resolver, install layer, tool window, settings,
@@ -47,8 +63,10 @@
         <!-- Project-open activity (modern replacement for ProjectManagerListener) -->
         <postStartupActivity implementation="dev.agentry.jetbrains.AgentryStartupActivity"/>
 
-        <!-- Headless / CLI entry point: `idea agentry ...` -->
-        <appStarter implementation="dev.agentry.jetbrains.cli.AgentryStarter"/>
+        <!-- Headless / CLI entry point: `idea agentry ...`. The `id` attribute carries the
+             command name; previously this came from `ApplicationStarter.commandName`, which
+             the platform deprecated in 2025.x (replaced by the EP-attribute mechanism). -->
+        <appStarter id="agentry" implementation="dev.agentry.jetbrains.cli.AgentryStarter"/>
     </extensions>
 
     <actions>

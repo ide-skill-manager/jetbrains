@@ -6,6 +6,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.actionSystem.Presentation
+import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -230,10 +231,13 @@ class AgentryToolWindowPanel(private val project: Project) {
      * Fire a named action with a data context carrying the project and (optionally) the
      * pre-selected skill names.
      *
-     * We invoke `action.actionPerformed(event)` directly rather than going through
-     * `ActionManager.tryToExecute`. The latter requires a non-null `InputEvent` and
-     * silently no-ops with our synthetic event when the action's update thread is BGT,
-     * which would make the Install / Uninstall selected buttons appear to do nothing.
+     * Goes through [ActionUtil.performActionDumbAwareWithCallbacks], the public wrapper
+     * that runs the action's `update`, then `actionPerformed`. We previously called
+     * `action.actionPerformed(event)` directly — but `actionPerformed` is
+     * `@ApiStatus.OverrideOnly`, so the verifier flagged it (and the next refactor of
+     * the platform's contract could break the direct call). `ActionManager.tryToExecute`
+     * isn't usable here because it requires a non-null `InputEvent` and silently no-ops
+     * with our synthetic event when the action's update thread is BGT.
      */
     private fun fireAction(actionId: String, skillNames: List<String>) {
         val action = ActionManager.getInstance().getAction(actionId) ?: run {
@@ -249,13 +253,14 @@ class AgentryToolWindowPanel(private val project: Project) {
         val event = AnActionEvent.createEvent(
             dataContext, Presentation(), "AgentryToolWindow", ActionUiKind.NONE, null
         )
-        action.actionPerformed(event)
+        ActionUtil.performActionDumbAwareWithCallbacks(action, event)
     }
 
     /**
      * Fire a plugin-component action. Data key carries the actual `AgentryNode.Component`
      * list so the action has the full [PluginComponent] + plugin manifest context it
-     * needs to dispatch through `PluginInstaller`.
+     * needs to dispatch through `PluginInstaller`. Same `performActionDumbAwareWithCallbacks`
+     * wrapper as [fireAction].
      */
     private fun fireComponentAction(actionId: String, components: List<AgentryNode.Component>) {
         val action = ActionManager.getInstance().getAction(actionId) ?: run {
@@ -271,6 +276,6 @@ class AgentryToolWindowPanel(private val project: Project) {
         val event = AnActionEvent.createEvent(
             dataContext, Presentation(), "AgentryToolWindow", ActionUiKind.NONE, null
         )
-        action.actionPerformed(event)
+        ActionUtil.performActionDumbAwareWithCallbacks(action, event)
     }
 }
