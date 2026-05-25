@@ -128,6 +128,42 @@ class SkillInstallerIntegrationTest : BasePlatformTestCase() {
         }
     }
 
+    fun testUninstallActuallyDeletesProjectDir() {
+        val registryUrl = "https://example.com/uninstall-test-registry.git"
+        val skillName = "delete-me"
+        val cacheDir = RegistryManager.getInstance().localDirFor(RegistrySource(url = registryUrl))
+        val skillSrc = File(cacheDir, skillName).apply { mkdirs() }
+        File(skillSrc, "skill.json").writeText(
+            """{"name":"$skillName","version":"1.0.0","displayName":"Delete Me"}"""
+        )
+        File(skillSrc, "prompt.md").writeText("# Delete Me\nbody")
+
+        val projectDir = File(myFixture.tempDirFixture.tempDirPath, "project-uninstall").apply { mkdirs() }
+        try {
+            val manifest = SkillManifest(
+                name = skillName,
+                version = "1.0.0",
+                displayName = "Delete Me",
+                sourceRegistry = registryUrl
+            )
+
+            val installResult = SkillInstaller.getInstance()
+                .install(manifest, InstallTarget.CLAUDE_PROJECT, projectDir.absolutePath)
+            assertTrue("install OK: ${installResult.exceptionOrNull()?.message}", installResult.isSuccess)
+
+            val destDir = File(projectDir, ".claude/skills/$skillName")
+            assertTrue("dest dir exists after install", destDir.exists())
+
+            val uninstallResult = SkillInstaller.getInstance()
+                .uninstall(skillName, InstallTarget.CLAUDE_PROJECT, projectDir.absolutePath)
+            assertTrue("uninstall OK: ${uninstallResult.exceptionOrNull()?.message}", uninstallResult.isSuccess)
+
+            assertFalse("dest dir gone after uninstall", destDir.exists())
+        } finally {
+            cacheDir.deleteRecursively()
+        }
+    }
+
     fun testCachePathIsCollisionResistant() {
         // Two URLs that the old `take(80) + sanitize` scheme could collapse onto the same
         // directory now hash apart cleanly.

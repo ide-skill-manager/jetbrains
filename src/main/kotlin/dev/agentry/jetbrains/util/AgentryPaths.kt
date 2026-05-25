@@ -13,7 +13,4 @@ object AgentryPaths {
 
     /** Registry working copies live here, one subdirectory per source. */
     val registryCacheRoot: File get() = File(userHome, ".agentry/cache")
-
-    /** Neutral skill install root (the `AGENTRY_CACHE` target). */
-    val agentrySkillsRoot: File get() = File(userHome, ".agentry/skills")
 }

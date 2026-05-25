@@ -11,17 +11,22 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.SearchTextField
+import com.intellij.ui.SimpleListCellRenderer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.Alarm
 import dev.agentry.jetbrains.AgentryDisposable
 import dev.agentry.jetbrains.actions.AgentryTopics
+import dev.agentry.jetbrains.actions.INSTALL_TARGET_DATA_KEY
 import dev.agentry.jetbrains.actions.SELECTED_SKILLS_DATA_KEY
 import dev.agentry.jetbrains.actions.SkillsChangedListener
-import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
+import dev.agentry.jetbrains.install.InstallScope
+import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.settings.AgentrySettings
 import java.awt.BorderLayout
+import java.io.File
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
@@ -47,6 +52,16 @@ class AgentryToolWindowPanel(private val project: Project) {
     private val addButton = JButton("+ Add Registry…")
     private val installButton = JButton("Install selected")
     private val uninstallButton = JButton("Uninstall selected")
+    private val installTargetCombo: ComboBox<InstallTarget> =
+        ComboBox(
+            // When no project is open, omit CLAUDE_PROJECT entirely from the model so it can't
+            // be selected. Swing cell renderers can style a disabled item but don't prevent
+            // selection — filtering the model is the reliable guarantee. If the project opens/
+            // closes mid-tool-window-life (rare), the user will see the missing entry until the
+            // tool window is reopened; acceptable for v0.1.2.
+            if (project.basePath?.isNotBlank() == true) InstallTarget.values()
+            else arrayOf(InstallTarget.CLAUDE_USER)
+        )
 
     val root: JPanel = buildPanel()
 
@@ -58,12 +73,9 @@ class AgentryToolWindowPanel(private val project: Project) {
         refreshButton.addActionListener { reloadEntries() }
         addButton.addActionListener { fireAction("Agentry.AddRegistry", emptyList()) }
         installButton.addActionListener {
-            // Two pipelines: legacy flat-skill installs (SkillManifest-based) and the
-            // newer plugin-component installs (PluginComponent-based via PluginInstaller).
-            // Fire whichever applies to the current selection; if both are present, run
-            // both.
-            val legacySkills = skillTree.selectedSkills().filter { !it.installed }.map { it.name }
-            val components = skillTree.selectedComponents().filter { !it.installed }
+            val scope = pickedScope()
+            val legacySkills = skillTree.selectedSkills().filter { scope !in it.installedScopes }.map { it.name }
+            val components = skillTree.selectedComponents().filter { scope !in it.installedScopes }
             if (legacySkills.isEmpty() && components.isEmpty()) {
                 statusLabel.text = "Nothing to install — select a skill or component."; return@addActionListener
             }
@@ -71,9 +83,10 @@ class AgentryToolWindowPanel(private val project: Project) {
             if (components.isNotEmpty()) fireComponentAction("Agentry.InstallComponents", components)
         }
         uninstallButton.addActionListener {
-            val legacy = skillTree.selectedSkills().filter { it.installed }.map { it.name } +
-                skillTree.selectedOrphans().map { it.name }
-            val components = skillTree.selectedComponents().filter { it.installed }
+            val scope = pickedScope()
+            val legacy = skillTree.selectedSkills().filter { scope in it.installedScopes }.map { it.name } +
+                skillTree.selectedOrphans().filter { scope in it.installedScopes }.map { it.name }
+            val components = skillTree.selectedComponents().filter { scope in it.installedScopes }
             if (legacy.isEmpty() && components.isEmpty()) {
                 statusLabel.text = "Nothing to remove — select an installed skill or component."; return@addActionListener
             }
@@ -97,6 +110,17 @@ class AgentryToolWindowPanel(private val project: Project) {
                 updateActionButtonState()
             }
         })
+        // "" = fallback text for null items (unreachable — model is non-empty enum values).
+        installTargetCombo.renderer = SimpleListCellRenderer.create("") { t ->
+            t.displayName
+        }
+        // Seed from settings, but only honour it if the model contains that value
+        // (CLAUDE_PROJECT may have been omitted above when no project is open).
+        val defaultTarget = AgentrySettings.getInstance().defaultInstallTarget
+        val model = (0 until installTargetCombo.itemCount).map { installTargetCombo.getItemAt(it) }
+        installTargetCombo.selectedItem = if (defaultTarget in model) defaultTarget else model.first()
+        installTargetCombo.addActionListener { updateActionButtonState() }
+
         updateActionButtonState()
         reloadEntries()
     }
@@ -114,7 +138,13 @@ class AgentryToolWindowPanel(private val project: Project) {
         panel.add(toolbar, BorderLayout.NORTH)
         panel.add(JBScrollPane(skillTree), BorderLayout.CENTER)
         val bottom = JPanel(BorderLayout()).apply {
-            val actions = JPanel().apply { add(installButton); add(uninstallButton) }
+            val actions = JPanel().apply {
+                add(JBLabel("Install to: "))
+                add(installTargetCombo)
+                add(Box.createHorizontalStrut(8))
+                add(installButton)
+                add(uninstallButton)
+            }
             add(actions, BorderLayout.WEST)
             add(statusLabel, BorderLayout.CENTER)
         }
@@ -124,12 +154,11 @@ class AgentryToolWindowPanel(private val project: Project) {
 
     /** Re-fetch + re-render. Runs in a background task; the UI is updated via invokeLater. */
     fun reloadEntries() {
-        val settings = AgentrySettings.getInstance()
         val basePath = project.basePath
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Agentry: loading skills", true) {
                 override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
-                    val root = SkillTreeBuilder.build(settings.defaultInstallTarget, basePath)
+                    val root = SkillTreeBuilder.build(basePath)
                     ApplicationManager.getApplication().invokeLater {
                         if (project.isDisposed) return@invokeLater
                         lastBuilt = root
@@ -184,7 +213,7 @@ class AgentryToolWindowPanel(private val project: Project) {
                     if (matching.isNotEmpty()) {
                         val copy = AgentryNode.Registry(child.source, child.status, matching.size)
                         matching.forEach { src ->
-                            val skill = AgentryNode.Skill(src.manifest, src.installed)
+                            val skill = AgentryNode.Skill(src.manifest, src.installedScopes)
                             skill.isChecked = src.isChecked
                             copy.add(skill)
                         }
@@ -198,7 +227,7 @@ class AgentryToolWindowPanel(private val project: Project) {
                     if (matching.isNotEmpty()) {
                         val copy = AgentryNode.OrphanGroup(matching.size)
                         matching.forEach { src ->
-                            copy.add(AgentryNode.Orphan(src.installed).apply { isChecked = src.isChecked })
+                            copy.add(AgentryNode.Orphan(src.installed, src.installedScopes).apply { isChecked = src.isChecked })
                         }
                         out.add(copy)
                     }
@@ -218,13 +247,40 @@ class AgentryToolWindowPanel(private val project: Project) {
         val checkedSkills = skillTree.selectedSkills()
         val checkedOrphans = skillTree.selectedOrphans()
         val checkedComponents = skillTree.selectedComponents()
-        val toInstall = checkedSkills.count { !it.installed } + checkedComponents.count { !it.installed }
-        val toUninstall = checkedSkills.count { it.installed } + checkedOrphans.size +
-            checkedComponents.count { it.installed }
+        val scope = pickedScope()
+        val toInstall =
+            checkedSkills.count { scope !in it.installedScopes } +
+            checkedComponents.count { scope !in it.installedScopes }
+        val toUninstall =
+            checkedSkills.count { scope in it.installedScopes } +
+            checkedOrphans.count { scope in it.installedScopes } +
+            checkedComponents.count { scope in it.installedScopes }
         installButton.text = if (toInstall > 0) "Install selected ($toInstall)" else "Install selected"
         uninstallButton.text = if (toUninstall > 0) "Uninstall selected ($toUninstall)" else "Uninstall selected"
         installButton.isEnabled = toInstall > 0
         uninstallButton.isEnabled = toUninstall > 0
+    }
+
+    /**
+     * Resolve the picker's current selection to a concrete [InstallScope]. Mirrors the
+     * safety of [dev.agentry.jetbrains.actions.resolveInstallScope]: if the picker is set to
+     * CLAUDE_PROJECT but the project has no base path (null or blank), fall back to
+     * Global rather than constructing InstallScope.Project(File("")) which would point
+     * at the JVM working directory.
+     *
+     * The settings fallback covers the brief window between combo model rebuilds where
+     * the selection could be null.
+     */
+    private fun pickedScope(): InstallScope {
+        val target = installTargetCombo.selectedItem as? InstallTarget
+            ?: AgentrySettings.getInstance().defaultInstallTarget
+        val basePath = project.basePath?.takeIf { it.isNotBlank() }
+        return when (target) {
+            InstallTarget.CLAUDE_USER -> InstallScope.Global
+            InstallTarget.CLAUDE_PROJECT ->
+                if (basePath != null) InstallScope.Project(File(basePath))
+                else InstallScope.Global
+        }
     }
 
     /**
@@ -247,6 +303,7 @@ class AgentryToolWindowPanel(private val project: Project) {
             when (dataId) {
                 SELECTED_SKILLS_DATA_KEY.name -> skillNames
                 CommonDataKeys.PROJECT.name -> project
+                INSTALL_TARGET_DATA_KEY.name -> installTargetCombo.selectedItem as? InstallTarget
                 else -> null
             }
         }
@@ -270,6 +327,7 @@ class AgentryToolWindowPanel(private val project: Project) {
             when (dataId) {
                 dev.agentry.jetbrains.actions.SELECTED_COMPONENTS_DATA_KEY.name -> components
                 CommonDataKeys.PROJECT.name -> project
+                INSTALL_TARGET_DATA_KEY.name -> installTargetCombo.selectedItem as? InstallTarget
                 else -> null
             }
         }

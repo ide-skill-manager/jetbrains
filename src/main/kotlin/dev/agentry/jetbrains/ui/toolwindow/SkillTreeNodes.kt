@@ -1,6 +1,7 @@
 package dev.agentry.jetbrains.ui.toolwindow
 
 import com.intellij.ui.CheckedTreeNode
+import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.model.ComponentKind
 import dev.agentry.jetbrains.model.InstalledSkill
 import dev.agentry.jetbrains.model.PluginComponent
@@ -33,9 +34,10 @@ sealed class AgentryNode(userObject: Any?) : CheckedTreeNode(userObject) {
 
     class Skill(
         val manifest: SkillManifest,
-        var installed: Boolean
+        var installedScopes: Set<InstallScope>
     ) : AgentryNode(manifest) {
         val name: String get() = manifest.name
+        val installed: Boolean get() = installedScopes.isNotEmpty()
     }
 
     /**
@@ -68,15 +70,17 @@ sealed class AgentryNode(userObject: Any?) : CheckedTreeNode(userObject) {
     class Component(
         val component: PluginComponent,
         val kind: ComponentKind,
-        var installed: Boolean
+        var installedScopes: Set<InstallScope>
     ) : AgentryNode(component) {
         val name: String get() = component.name
+        val installed: Boolean get() = installedScopes.isNotEmpty()
     }
 
     class OrphanGroup(val count: Int) : AgentryNode("Installed (no registered registry)")
 
     class Orphan(
-        val installed: InstalledSkill
+        val installed: InstalledSkill,
+        val installedScopes: Set<InstallScope>
     ) : AgentryNode(installed) {
         val name: String get() = installed.manifest.name
         val location: File get() = installed.location

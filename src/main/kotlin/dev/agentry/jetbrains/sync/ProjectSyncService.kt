@@ -96,8 +96,12 @@ class ProjectSyncService(private val project: Project) {
                         "version pinning is registry-side via the source `ref`, not skill-side."
                 )
             }
-            val target = enumValues<InstallTarget>().firstOrNull { it.name == dep.target }
-                ?: settings.defaultInstallTarget
+            val target = enumValues<InstallTarget>().firstOrNull { it.name == dep.target } ?: run {
+                if (dep.target.isNotBlank()) {
+                    log.warn("Skill '${dep.name}' has unknown target '${dep.target}'; using settings default")
+                }
+                settings.defaultInstallTarget
+            }
             if (!installer.isInstalled(dep.name, target, basePath)) {
                 val result = installer.install(manifest, target, basePath)
                 if (result.isSuccess) installed++

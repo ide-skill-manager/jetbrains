@@ -1,6 +1,7 @@
 package dev.agentry.jetbrains.ui.toolwindow
 
 import com.intellij.openapi.diagnostic.logger
+import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.PluginInstallState
 import dev.agentry.jetbrains.install.SkillInstaller
 import dev.agentry.jetbrains.model.ComponentKind
@@ -39,7 +40,7 @@ object SkillTreeBuilder {
     private val pluginManifestParser = PluginManifestParser()
     private val pluginScanner = PluginScanner()
 
-    fun build(target: InstallTarget, projectBasePath: String?): AgentryNode.Root {
+    fun build(projectBasePath: String?): AgentryNode.Root {
         val settings = AgentrySettings.getInstance()
         val sources = settings.registrySources.map {
             RegistrySource(it.url, it.ref, it.enabled, it.displayName)
@@ -50,24 +51,25 @@ object SkillTreeBuilder {
         registry.fetchAll(enabled)
 
         val installer = SkillInstaller.getInstance()
-        val installedSkillNames = installer.listInstalled(target, projectBasePath)
-            .map { it.manifest.name }.toSet()
+        // Build a cross-scope map so legacy registry rows show the correct badge(s) for
+        // BOTH CLAUDE_USER and CLAUDE_PROJECT — not just whichever target the caller passed.
+        val installedLegacySkills: Map<String, Set<InstallScope>> = legacyScopesInstalled(projectBasePath)
 
         val root = AgentryNode.Root()
         sources.forEach { source ->
             val cloneDir = registry.localDirFor(source)
-            val registryNode = buildRegistryNode(source, cloneDir, installedSkillNames, projectBasePath)
+            val registryNode = buildRegistryNode(source, cloneDir, installedLegacySkills, projectBasePath)
             root.add(registryNode)
         }
 
-        addOrphans(root, installer.listInstalled(target, projectBasePath).map { it }, sources, target, projectBasePath)
+        addOrphans(root, listInstalledAcrossScopes(installer, projectBasePath), sources, projectBasePath)
         return root
     }
 
     private fun buildRegistryNode(
         source: RegistrySource,
         cloneDir: File,
-        installedSkillNames: Set<String>,
+        installedLegacySkills: Map<String, Set<InstallScope>>,
         projectBasePath: String?
     ): AgentryNode.Registry {
         // 1. Marketplace catalog?
@@ -105,7 +107,12 @@ object SkillTreeBuilder {
         }
         val node = registryWithStatus(source, status, manifests.size)
         manifests.forEach { m ->
-            node.add(AgentryNode.Skill(m, installed = m.name in installedSkillNames))
+            node.add(
+                AgentryNode.Skill(
+                    m,
+                    installedScopes = installedLegacySkills[m.name] ?: emptySet()
+                )
+            )
         }
         return node
     }
@@ -159,8 +166,8 @@ object SkillTreeBuilder {
         return byKind.map { (kind, items) ->
             val group = AgentryNode.ComponentGroup(kind, items.size)
             items.forEach { c ->
-                val installed = PluginInstallState.isInstalled(c, manifest, projectBasePath)
-                group.add(AgentryNode.Component(c, kind, installed))
+                val locs = PluginInstallState.locationsOf(c, manifest, projectBasePath)
+                group.add(AgentryNode.Component(c, kind, installedScopes = locs))
             }
             group
         }
@@ -171,11 +178,10 @@ object SkillTreeBuilder {
      * present. Carried over from the original `SkillTreeBuilder` so disabling a registry
      * doesn't strand the user's skills.
      */
-    private fun addOrphans(
+    internal fun addOrphans(
         root: AgentryNode.Root,
         installed: List<dev.agentry.jetbrains.model.InstalledSkill>,
         sources: List<RegistrySource>,
-        target: InstallTarget,
         projectBasePath: String?
     ) {
         val registry = RegistryManager.getInstance()
@@ -185,9 +191,82 @@ object SkillTreeBuilder {
             .toSet()
         val orphans = installed.filter { it.manifest.name !in knownNames }
         if (orphans.isEmpty()) return
-        val group = AgentryNode.OrphanGroup(orphans.size)
-        orphans.forEach { group.add(AgentryNode.Orphan(it)) }
+        val basePath = projectBasePath?.takeIf { it.isNotBlank() }
+        // Merge orphans by skill name so a skill installed at both CLAUDE_USER and
+        // CLAUDE_PROJECT produces ONE row with installedScopes covering both targets,
+        // rather than two confusingly duplicate rows in the tree.
+        val grouped: Map<String, List<dev.agentry.jetbrains.model.InstalledSkill>> =
+            orphans.groupBy { it.manifest.name }
+        val group = AgentryNode.OrphanGroup(grouped.size)
+        grouped.forEach { (_, entries) ->
+            val scopes: Set<InstallScope> = entries.map { entry ->
+                // Use the recorded install target rather than a path-prefix heuristic. A
+                // path prefix check misclassifies CLAUDE_USER installs when the project
+                // root happens to be a parent of the home directory (e.g. ~/  as project).
+                when (entry.target) {
+                    InstallTarget.CLAUDE_USER -> InstallScope.Global
+                    InstallTarget.CLAUDE_PROJECT ->
+                        if (basePath != null) InstallScope.Project(File(basePath))
+                        else InstallScope.Global  // defensive fallback; basePath checked above
+                }
+            }.toSet()
+            // Use the first entry as the representative InstalledSkill (they share name +
+            // manifest; the location field differs but uninstall actions resolve it per-scope
+            // through the action's own resolveInstallScope logic).
+            group.add(AgentryNode.Orphan(entries.first(), installedScopes = scopes))
+        }
         root.add(group)
+    }
+
+    /**
+     * Query installed skills at BOTH [InstallTarget.CLAUDE_USER] and
+     * [InstallTarget.CLAUDE_PROJECT] and return them as a flat list. The returned entries
+     * each carry their own [dev.agentry.jetbrains.model.InstalledSkill.target] field, so
+     * callers can distinguish which scope each entry came from.
+     *
+     * Used by [build] to feed [addOrphans] so that orphan discovery isn't limited to
+     * whichever single target the tree was opened with — e.g. a skill installed at
+     * [InstallTarget.CLAUDE_PROJECT] while the default target is [InstallTarget.CLAUDE_USER]
+     * will still surface as an orphan.
+     */
+    private fun listInstalledAcrossScopes(
+        installer: SkillInstaller,
+        projectBasePath: String?
+    ): List<dev.agentry.jetbrains.model.InstalledSkill> {
+        val basePath = projectBasePath?.takeIf { it.isNotBlank() }
+        val all = mutableListOf<dev.agentry.jetbrains.model.InstalledSkill>()
+        all += installer.listInstalled(InstallTarget.CLAUDE_USER, basePath)
+        if (basePath != null) {
+            all += installer.listInstalled(InstallTarget.CLAUDE_PROJECT, basePath)
+        }
+        return all
+    }
+
+    /**
+     * Enumerate installed legacy skills at BOTH [InstallTarget.CLAUDE_USER] and
+     * [InstallTarget.CLAUDE_PROJECT], returning a map from skill name to the set of
+     * [InstallScope]s at which it is currently installed.
+     *
+     * The old code only checked the single `target` passed to [build], so after the
+     * per-action install scope picker was introduced, a skill installed at one scope would
+     * display no badge (or the wrong badge) when the tree was viewed with the other scope
+     * selected. This helper fixes that by always querying both.
+     */
+    private fun legacyScopesInstalled(projectBasePath: String?): Map<String, Set<InstallScope>> {
+        val basePath = projectBasePath?.takeIf { it.isNotBlank() }
+        val installer = SkillInstaller.getInstance()
+        val byName = mutableMapOf<String, MutableSet<InstallScope>>()
+        // CLAUDE_USER is always meaningful — reads ~/.claude/skills/ regardless of projectBasePath.
+        installer.listInstalled(InstallTarget.CLAUDE_USER, basePath).forEach {
+            byName.getOrPut(it.manifest.name) { mutableSetOf() }.add(InstallScope.Global)
+        }
+        if (basePath != null) {
+            installer.listInstalled(InstallTarget.CLAUDE_PROJECT, basePath).forEach {
+                byName.getOrPut(it.manifest.name) { mutableSetOf() }
+                    .add(InstallScope.Project(File(basePath)))
+            }
+        }
+        return byName
     }
 
 }

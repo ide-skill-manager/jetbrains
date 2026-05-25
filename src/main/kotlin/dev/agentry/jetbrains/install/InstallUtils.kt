@@ -1,10 +1,18 @@
 package dev.agentry.jetbrains.install
 
+import com.intellij.openapi.diagnostic.Logger
 import dev.agentry.jetbrains.util.InputValidation
 import java.io.File
+import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
+import java.util.EnumSet
+
+private val log = Logger.getInstance("dev.agentry.jetbrains.install.InstallUtils")
 
 /**
  * Split a markdown body into `(frontmatter-without-fences, body)` or `(null, body)` when
@@ -78,6 +86,77 @@ internal fun copySafe(source: File, dest: File) {
                 // Skip fifos / devices / sockets.
             }
         }
+    }
+}
+
+/**
+ * Recursively delete [root], **without traversing into symlinked directories**. Symlink
+ * entries to files are deleted as the links themselves (their targets are left alone).
+ * Only symlink-to-directory entries cause the deletion to fail — those would otherwise
+ * let an attacker direct the walk into a chosen location.
+ *
+ * [File.deleteRecursively] uses [File.walkBottomUp] which treats a symlink-to-directory
+ * as a real directory and descends into it. If a malicious project plants a symlink INSIDE
+ * the install dir after install completes (e.g. `<project>/.claude/skills/foo/evil -> /home/user/data`),
+ * that function would traverse and delete files outside the install root.
+ *
+ * This implementation uses [Files.walkFileTree] without [java.nio.file.FileVisitOption.FOLLOW_LINKS],
+ * so symlinked directory entries are never descended into.
+ *
+ * Returns `true` on full success; `false` on any failure (encountered symlinked directory,
+ * I/O error, permission denial). Exceptions are caught internally and converted to a
+ * `false` return — callers don't need to wrap calls in try/catch. The caught throwable
+ * is logged at `debug` level for diagnosis.
+ *
+ * Used by uninstall + rollback paths instead of [File.deleteRecursively], which uses
+ * `walkBottomUp` and treats a symlink-to-directory as a directory — potentially deleting
+ * files outside the intended install root.
+ */
+internal fun deleteRecursivelySymlinkSafe(root: File): Boolean {
+    if (!root.exists() && !Files.isSymbolicLink(root.toPath())) return true
+    try {
+        Files.walkFileTree(
+            root.toPath(),
+            EnumSet.noneOf(java.nio.file.FileVisitOption::class.java), // NO FOLLOW_LINKS
+            Int.MAX_VALUE,
+            object : SimpleFileVisitor<java.nio.file.Path>() {
+                override fun preVisitDirectory(
+                    dir: java.nio.file.Path,
+                    attrs: BasicFileAttributes
+                ): FileVisitResult {
+                    // attrs here are for the entry itself (not the link target) because we
+                    // used no FOLLOW_LINKS. However, SimpleFileVisitor still reports a symlink-
+                    // to-directory via preVisitDirectory when it exists on the path. The safest
+                    // guard is to re-check with isSymbolicLink on entry.
+                    if (Files.isSymbolicLink(dir)) {
+                        throw SecurityException("Refusing to traverse symlink during delete: $dir")
+                    }
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun visitFile(
+                    file: java.nio.file.Path,
+                    attrs: BasicFileAttributes
+                ): FileVisitResult {
+                    // Deletes the symlink itself (not its target) for symlink-to-file entries.
+                    Files.delete(file)
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun postVisitDirectory(
+                    dir: java.nio.file.Path,
+                    exc: IOException?
+                ): FileVisitResult {
+                    if (exc != null) throw exc
+                    Files.delete(dir)
+                    return FileVisitResult.CONTINUE
+                }
+            }
+        )
+        return true
+    } catch (err: Throwable) {
+        log.debug("deleteRecursivelySymlinkSafe failed for '$root': ${err.message}", err)
+        return false
     }
 }
 

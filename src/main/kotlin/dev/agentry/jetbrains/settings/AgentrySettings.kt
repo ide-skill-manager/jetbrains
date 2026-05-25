@@ -20,7 +20,7 @@ class AgentrySettings : PersistentStateComponent<AgentrySettings.State> {
 
     data class State(
         var registrySources: MutableList<RegistrySourceState> = mutableListOf(),
-        var defaultInstallTarget: String = InstallTarget.CLAUDE_PROJECT.name,
+        var defaultInstallTarget: String = InstallTarget.CLAUDE_USER.name,
         var autoSyncOnOpen: Boolean = false,
         /** Project base paths the user has approved for auto-sync. */
         var trustedProjects: MutableSet<String> = mutableSetOf()
@@ -36,7 +36,15 @@ class AgentrySettings : PersistentStateComponent<AgentrySettings.State> {
     private var state = State()
 
     override fun getState(): State = state
-    override fun loadState(state: State) { this.state = state }
+    override fun loadState(state: State) {
+        this.state = state
+        // Coerce values persisted by older versions (AGENTRY_CACHE, JUNIE_PROJECT) — both
+        // removed in 0.1.2. Any unrecognised value falls back to the current default so the
+        // settings panel never shows an enum the combo can't display.
+        if (enumValues<InstallTarget>().none { it.name == state.defaultInstallTarget }) {
+            state.defaultInstallTarget = InstallTarget.CLAUDE_USER.name
+        }
+    }
 
     var registrySources: MutableList<RegistrySourceState>
         get() = state.registrySources
@@ -44,7 +52,7 @@ class AgentrySettings : PersistentStateComponent<AgentrySettings.State> {
 
     var defaultInstallTarget: InstallTarget
         get() = enumValues<InstallTarget>().firstOrNull { it.name == state.defaultInstallTarget }
-            ?: InstallTarget.CLAUDE_PROJECT
+            ?: InstallTarget.CLAUDE_USER
         set(value) { state.defaultInstallTarget = value.name }
 
     var autoSyncOnOpen: Boolean

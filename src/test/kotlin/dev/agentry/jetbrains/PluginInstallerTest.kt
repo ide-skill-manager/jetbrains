@@ -1,9 +1,16 @@
 package dev.agentry.jetbrains
 
+import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import dev.agentry.jetbrains.actions.INSTALL_TARGET_DATA_KEY
+import dev.agentry.jetbrains.actions.resolveInstallScope
+import dev.agentry.jetbrains.actions.uninstallComponents
 import dev.agentry.jetbrains.install.InstallScope
+import dev.agentry.jetbrains.install.PluginInstallState
 import dev.agentry.jetbrains.install.PluginInstaller
+import dev.agentry.jetbrains.settings.AgentrySettings
 import dev.agentry.jetbrains.model.ComponentKind
+import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.ManifestDialect
 import dev.agentry.jetbrains.model.PluginAuthor
 import dev.agentry.jetbrains.model.PluginComponent
@@ -164,6 +171,36 @@ class PluginInstallerTest : BasePlatformTestCase() {
         )
     }
 
+    fun testSkillInstallGlobalScopeDualWritesToCopilotAndClaude() {
+        val (root, _) = newPluginAndProject("dualwrite-skill")
+        File(root, "skills/probe").mkdirs()
+        File(root, "skills/probe/SKILL.md").writeText("---\nname: probe\n---\nBody")
+        val manifest = manifest(root, "dualwrite-skill")
+        val components = listOf(
+            PluginComponent.Skill(
+                name = "probe",
+                sourceDir = File(root, "skills/probe"),
+                skillFile = File(root, "skills/probe/SKILL.md"),
+                supportFiles = emptyList()
+            )
+        )
+        val report = PluginInstaller().installPlugin(manifest, components, InstallScope.Global)
+        assertTrue("global install succeeded: ${report.failed}", report.isFullSuccess)
+        val home = myFixture.tempDirFixture.tempDirPath  // user.home is overridden in setUp()
+        assertTrue(
+            "~/.copilot/skills/probe/SKILL.md exists",
+            File(home, ".copilot/skills/probe/SKILL.md").exists()
+        )
+        assertTrue(
+            "~/.claude/skills/probe/SKILL.md exists",
+            File(home, ".claude/skills/probe/SKILL.md").exists()
+        )
+        // Both copies should have identical content.
+        val copilotText = File(home, ".copilot/skills/probe/SKILL.md").readText()
+        val claudeText = File(home, ".claude/skills/probe/SKILL.md").readText()
+        assertEquals("dual-write content matches", copilotText, claudeText)
+    }
+
     fun testAgentInstallGlobalScopeNamespacesByPluginAndDualWrites() {
         val (root, _) = newPluginAndProject("ns-plugin")
         File(root, "agents").mkdirs()
@@ -228,6 +265,413 @@ class PluginInstallerTest : BasePlatformTestCase() {
         assertEquals(ComponentKind.SKILL, report.installed.single().kind)
         assertEquals(1, report.failed.size)
         assertEquals(ComponentKind.MCP_SERVER, report.failed.single().kind)
+    }
+
+    fun testLocationsOfEmptyWhenNothingInstalled() {
+        val (root, projectDir) = newPluginAndProject("loc-empty")
+        val manifest = manifest(root, "loc-empty")
+        val component = PluginComponent.Skill(
+            name = "untouched",
+            sourceDir = File(root, "skills/untouched"),
+            skillFile = File(root, "skills/untouched/SKILL.md"),
+            supportFiles = emptyList()
+        )
+        val locs = PluginInstallState.locationsOf(component, manifest, projectDir.absolutePath)
+        assertTrue("expected empty, got $locs", locs.isEmpty())
+    }
+
+    fun testLocationsOfReportsProjectAfterProjectInstall() {
+        val (root, projectDir) = newPluginAndProject("loc-proj")
+        File(root, "skills/here").mkdirs()
+        File(root, "skills/here/SKILL.md").writeText("---\nname: here\n---\n")
+        val manifest = manifest(root, "loc-proj")
+        val components = listOf(
+            PluginComponent.Skill("here", File(root, "skills/here"),
+                File(root, "skills/here/SKILL.md"), emptyList())
+        )
+        PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
+        val locs = PluginInstallState.locationsOf(components.first(), manifest, projectDir.absolutePath)
+        assertEquals(setOf<InstallScope>(InstallScope.Project(File(projectDir.absolutePath))), locs)
+    }
+
+    fun testLocationsOfReportsGlobalAfterGlobalInstall() {
+        // user.home is overridden to the fixture temp dir in setUp() (same pattern as
+        // testAgentInstallGlobalScopeNamespacesByPluginAndDualWrites).
+        val (root, _) = newPluginAndProject("loc-global")
+        File(root, "skills/g").mkdirs()
+        File(root, "skills/g/SKILL.md").writeText("---\nname: g\n---\n")
+        val manifest = manifest(root, "loc-global")
+        val components = listOf(
+            PluginComponent.Skill("g", File(root, "skills/g"),
+                File(root, "skills/g/SKILL.md"), emptyList())
+        )
+        PluginInstaller().installPlugin(manifest, components, InstallScope.Global)
+        // projectBasePath = null confirms the null-project case doesn't accidentally swallow Global.
+        val locs = PluginInstallState.locationsOf(components.first(), manifest, projectBasePath = null)
+        assertEquals(setOf<InstallScope>(InstallScope.Global), locs)
+    }
+
+    // -------------------------------------------------------------------------
+    // resolveInstallScope unit tests (Task 6 — core bug fix)
+    // -------------------------------------------------------------------------
+
+    fun testResolveInstallScopeReturnsGlobalWhenPickerSetsClaudeUser() {
+        val ctx = DataContext { id ->
+            if (id == INSTALL_TARGET_DATA_KEY.name) InstallTarget.CLAUDE_USER else null
+        }
+        val resolved = resolveInstallScope(ctx, "/tmp/proj")
+        assertEquals(InstallScope.Global, resolved)
+    }
+
+    fun testResolveInstallScopeReturnsProjectWhenPickerSetsClaudeProject() {
+        val ctx = DataContext { id ->
+            if (id == INSTALL_TARGET_DATA_KEY.name) InstallTarget.CLAUDE_PROJECT else null
+        }
+        val resolved = resolveInstallScope(ctx, "/tmp/proj")
+        assertEquals(InstallScope.Project(File("/tmp/proj")), resolved)
+    }
+
+    fun testResolveInstallScopeFallsBackToSettingsWhenNoPicker() {
+        val settings = AgentrySettings.getInstance()
+        val originalDefault = settings.defaultInstallTarget
+        try {
+            settings.defaultInstallTarget = InstallTarget.CLAUDE_USER
+            val ctx = DataContext { _ -> null }
+            val resolved = resolveInstallScope(ctx, "/tmp/proj")
+            // Settings default forced to CLAUDE_USER above → Global
+            assertEquals(InstallScope.Global, resolved)
+        } finally {
+            settings.defaultInstallTarget = originalDefault
+        }
+    }
+
+    fun testResolveInstallScopeFallsBackToGlobalWhenClaudeProjectButNoBasePath() {
+        val ctx = DataContext { id ->
+            if (id == INSTALL_TARGET_DATA_KEY.name) InstallTarget.CLAUDE_PROJECT else null
+        }
+        val resolved = resolveInstallScope(ctx, null)
+        assertEquals(InstallScope.Global, resolved)
+    }
+
+    fun testInstallAtUserScopeWhenAlreadyAtProjectEndsUpAtBoth() {
+        val (root, projectDir) = newPluginAndProject("both-scope-agent")
+        File(root, "agents").mkdirs()
+        File(root, "agents/dual.agent.md").writeText("---\nname: dual\ndescription: 'x'\n---\n")
+        val components = listOf(
+            PluginComponent.Agent("dual", File(root, "agents/dual.agent.md"), description = "x")
+        )
+        val manifest = manifest(root, "both-scope-agent")
+
+        // First install: Project scope.
+        val first = PluginInstaller().installPlugin(manifest, components, InstallScope.Project(projectDir))
+        assertTrue("project install OK", first.isFullSuccess)
+
+        // Second install: Global scope. Should NOT remove project files.
+        val second = PluginInstaller().installPlugin(manifest, components, InstallScope.Global)
+        assertTrue("global install OK", second.isFullSuccess)
+
+        val home = myFixture.tempDirFixture.tempDirPath  // user.home is overridden in setUp()
+        assertTrue("project dest still exists",
+            File(projectDir, ".github/agents/dual.agent.md").exists())
+        assertTrue("project .claude dest still exists",
+            File(projectDir, ".claude/agents/dual.agent.md").exists())
+        assertTrue("global .copilot dest now exists",
+            File(home, ".copilot/agents/both-scope-agent__dual.agent.md").exists())
+        assertTrue("global .claude dest now exists",
+            File(home, ".claude/agents/both-scope-agent__dual.agent.md").exists())
+
+        // PluginInstallState.locationsOf reports both.
+        val locs = PluginInstallState.locationsOf(components.first(), manifest, projectDir.absolutePath)
+        assertEquals(setOf<InstallScope>(InstallScope.Project(File(projectDir.absolutePath)), InstallScope.Global), locs)
+    }
+
+    // -------------------------------------------------------------------------
+    // Regression: uninstall must actually delete — not silently succeed on partial failure
+    // -------------------------------------------------------------------------
+
+    fun testUninstallActuallyDeletesPrimaryDestination() {
+        // Use a distinct skill name to avoid colliding with the global "probe" installation
+        // created by testSkillInstallGlobalScopeDualWritesToCopilotAndClaude (user.home is
+        // shared across all tests in the class, so leftovers from other tests persist).
+        val (root, projectDir) = newPluginAndProject("delete-check")
+        val skillName = "uninstall-regression-skill"
+        File(root, "skills/$skillName").mkdirs()
+        File(root, "skills/$skillName/SKILL.md").writeText("---\nname: $skillName\n---\n")
+        val component = PluginComponent.Skill(
+            name = skillName,
+            sourceDir = File(root, "skills/$skillName"),
+            skillFile = File(root, "skills/$skillName/SKILL.md"),
+            supportFiles = emptyList()
+        )
+        val manifest = manifest(root, "delete-check")
+
+        val installReport = PluginInstaller().installPlugin(manifest, listOf(component), InstallScope.Project(projectDir))
+        assertTrue("install OK: ${installReport.failed}", installReport.isFullSuccess)
+        val destDir = File(projectDir, ".claude/skills/$skillName")
+        assertTrue("dest exists after install", destDir.exists())
+
+        // Exercise the actual uninstallComponents code path — it's now `internal` for testability.
+        val uninstallReport = uninstallComponents(manifest, listOf(component), InstallScope.Project(projectDir))
+        assertTrue("uninstall OK: ${uninstallReport.failed}", uninstallReport.isFullSuccess)
+
+        // The primary destination (and its entire directory tree) must be gone.
+        val primaryDest = File(projectDir, ".claude/skills/$skillName")
+        assertFalse("primary dest gone after uninstall", primaryDest.exists())
+
+        // PluginInstallState.locationsOf must also report nothing — no badge should linger.
+        val locs = PluginInstallState.locationsOf(component, manifest, projectDir.absolutePath)
+        assertTrue("locationsOf reports nothing after uninstall, got: $locs", locs.isEmpty())
+    }
+
+    fun testUninstallRefusesSymlinkedIntermediateDir() {
+        // Create a synthetic install at <project>/.claude/skills/foo where <project>/.claude
+        // is itself a symlink pointing OUTSIDE the project. The deletion path must refuse.
+        // Use real-FS temp directories so java.nio symlink APIs work (the IntelliJ VFS
+        // temp fixture path is not a real FS path and cannot host symlinks).
+        val base = java.nio.file.Files.createTempDirectory("agentry-test-symlink-intermediate").toFile()
+        try {
+            val projectDir = File(base, "project").apply { mkdirs() }
+            val root = File(base, "plugin").apply { mkdirs() }
+            val realPlace = File(base, "somewhere-else").apply { mkdirs() }
+            // Make <project>/.claude a symlink pointing outside the project.
+            val projectClaude = File(projectDir, ".claude")
+            try {
+                java.nio.file.Files.createSymbolicLink(projectClaude.toPath(), realPlace.toPath())
+            } catch (_: Throwable) {
+                return // FS doesn't allow symlinks; skip
+            }
+            // Plant a file at the install location through the symlink.
+            val planted = File(realPlace, "skills/foo")
+            planted.mkdirs()
+            File(planted, "SKILL.md").writeText("planted")
+
+            val component = PluginComponent.Skill("foo", planted, File(planted, "SKILL.md"), emptyList())
+            val manifest = manifest(root, "symlink-intermediate")
+
+            // Call the uninstall helper directly — it's `internal`.
+            val report = uninstallComponents(manifest, listOf(component), InstallScope.Project(projectDir))
+            assertTrue("refused: ${report.failed.firstOrNull()?.reason}", report.isFullFailure)
+            // And the planted file must still exist (we refused to touch it).
+            assertTrue("planted file still exists", File(planted, "SKILL.md").exists())
+        } finally {
+            base.deleteRecursively()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Regression: uninstall must not traverse symlinks planted INSIDE install dir
+    // (Fixes 3 + 4 — shared deleteRecursivelySymlinkSafe helper)
+    // -------------------------------------------------------------------------
+
+    fun testUninstallDoesNotFollowSymlinkInsideInstallDir() {
+        // Real-FS temp directories so java.nio symlink APIs work.
+        val base = java.nio.file.Files.createTempDirectory("symlink-traverse-test").toFile()
+        try {
+            val projectDir = File(base, "proj").apply { mkdirs() }
+            val root = File(base, "plugin").apply { mkdirs() }
+            val outside = File(base, "outside-data").apply { mkdirs() }
+            val outsideFile = File(outside, "important.txt").apply { writeText("DO NOT DELETE") }
+
+            // Build the install dir and plant a real skill file.
+            val installDir = File(projectDir, ".claude/skills/dangerous").apply { mkdirs() }
+            File(installDir, "SKILL.md").writeText("real install file")
+
+            // Plant a symlink INSIDE the install dir pointing to the outside dir.
+            val planted = File(installDir, "exfil")
+            try {
+                java.nio.file.Files.createSymbolicLink(planted.toPath(), outside.toPath())
+            } catch (_: Throwable) {
+                return // FS doesn't allow symlinks; skip
+            }
+
+            val component = PluginComponent.Skill(
+                name = "dangerous",
+                sourceDir = installDir,
+                skillFile = File(installDir, "SKILL.md"),
+                supportFiles = emptyList()
+            )
+            val pluginManifest = manifest(root, "danger-test")
+
+            // Uninstall through the ComponentActions pipeline — exercises the
+            // deleteRecursivelySymlinkSafe helper introduced by Fix 3.
+            val report = uninstallComponents(
+                pluginManifest,
+                listOf(component),
+                InstallScope.Project(projectDir)
+            )
+
+            // EITHER the uninstall failed (refused to traverse symlink) OR it succeeded
+            // but left the file OUTSIDE the install root untouched. The key invariant is
+            // that the file outside the install dir survives.
+            assertTrue("outside file must survive uninstall", outsideFile.exists())
+            assertEquals("DO NOT DELETE", outsideFile.readText())
+        } finally {
+            base.deleteRecursively() // best-effort cleanup of test artifacts
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Fix 2: canonical-root containment check on the INSTALL path
+    // -------------------------------------------------------------------------
+
+    fun testInstallRefusesSymlinkedIntermediateDir() {
+        // Real-FS temp dir — the IntelliJ VFS fixture doesn't support real symlinks.
+        val base = java.nio.file.Files.createTempDirectory("install-symlink-test").toFile()
+        try {
+            val projectDir = File(base, "proj").apply { mkdirs() }
+            val root = File(base, "plugin").apply { mkdirs() }
+            val realPlace = File(base, "elsewhere").apply { mkdirs() }
+            val projectClaude = File(projectDir, ".claude")
+            try {
+                java.nio.file.Files.createSymbolicLink(projectClaude.toPath(), realPlace.toPath())
+            } catch (_: Throwable) {
+                return // FS doesn't support symlinks; skip
+            }
+
+            File(root, "skills/foo").mkdirs()
+            File(root, "skills/foo/SKILL.md").writeText("---\nname: foo\n---\n")
+            val component = PluginComponent.Skill(
+                name = "foo",
+                sourceDir = File(root, "skills/foo"),
+                skillFile = File(root, "skills/foo/SKILL.md"),
+                supportFiles = emptyList()
+            )
+            val pluginManifest = manifest(root, "symlink-install-test")
+
+            // PluginInstaller.dispatch wraps with runCatching; SecurityException surfaces as
+            // a failed component in the report.
+            val report = PluginInstaller().installPlugin(
+                pluginManifest,
+                listOf(component),
+                InstallScope.Project(projectDir)
+            )
+            assertTrue(
+                "expected install to be refused for symlinked intermediate dir, got: ${report.failed}",
+                report.isFullFailure
+            )
+            val failReason = report.failed.firstOrNull()?.reason ?: ""
+            assertTrue(
+                "expected 'escapes install root' in error, got: $failReason",
+                failReason.contains("escapes install root")
+            )
+            // Nothing should have been written into realPlace.
+            assertTrue("nothing written to symlink target", realPlace.listFiles().isNullOrEmpty())
+        } finally {
+            base.deleteRecursively()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Round 10: canonical-root check is Project-only; Global honours user symlinks
+    // -------------------------------------------------------------------------
+
+    fun testGlobalInstallSucceedsWhenHomeClaudeIsSymlinkedToAnotherDir() {
+        // Real-FS temp dir — symlinks need a real filesystem.
+        val base = java.nio.file.Files.createTempDirectory("global-symlink-test").toFile()
+        val originalUserHome = System.getProperty("user.home")
+        try {
+            // Set user.home to base/home, but symlink HOME/.claude → base/elsewhere/claude.
+            val homeDir = File(base, "home").apply { mkdirs() }
+            val elsewhere = File(base, "elsewhere/claude").apply { mkdirs() }
+            System.setProperty("user.home", homeDir.absolutePath)
+            val homeClaude = File(homeDir, ".claude")
+            try {
+                java.nio.file.Files.createSymbolicLink(homeClaude.toPath(), elsewhere.toPath())
+            } catch (_: Throwable) {
+                return // FS doesn't allow symlinks; skip
+            }
+
+            // Build a synthetic component + manifest and install at Global scope.
+            val root = File(base, "plugin-root").apply { mkdirs() }
+            File(root, "skills/foo").mkdirs()
+            File(root, "skills/foo/SKILL.md").writeText("---\nname: foo\n---\n")
+            val component = PluginComponent.Skill(
+                name = "foo",
+                sourceDir = File(root, "skills/foo"),
+                skillFile = File(root, "skills/foo/SKILL.md"),
+                supportFiles = emptyList()
+            )
+            val pluginManifest = manifest(root, "test-plugin")
+
+            val report = PluginInstaller().installPlugin(pluginManifest, listOf(component), InstallScope.Global)
+            assertTrue(
+                "global install succeeded even though ~/.claude is a symlink: ${report.failed.firstOrNull()?.reason}",
+                report.isFullSuccess
+            )
+            // The symlink target should contain the installed skill.
+            assertTrue(
+                "install landed via the symlink into elsewhere/claude",
+                File(elsewhere, "skills/foo/SKILL.md").exists()
+            )
+
+            // locationsOf must report Global as installed — the Global canonical-root skip
+            // is what makes this true even though canonicalFile of the dest resolves under
+            // base/elsewhere rather than base/home.
+            val locs = PluginInstallState.locationsOf(component, pluginManifest, projectBasePath = null)
+            assertTrue(
+                "Global must be in installedScopes despite symlinked ~/.claude, got: $locs",
+                InstallScope.Global in locs
+            )
+        } finally {
+            originalUserHome?.let { System.setProperty("user.home", it) }
+                ?: System.clearProperty("user.home")
+            base.deleteRecursively()
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Fix 3: rollback on partial dual-write failure
+    // -------------------------------------------------------------------------
+
+    fun testInstallRollsBackPartialDualWriteOnFailure() {
+        // Override user.home to a temp dir so we control the Global install roots.
+        // Then make ~/.claude/skills read-only so the second leg of a Global install fails.
+        // On macOS, setReadOnly() does not always prevent the owner from writing; if the
+        // read-only sentinel itself can still be written, we skip this test.
+        val home = java.nio.file.Files.createTempDirectory("rollback-test").toFile()
+        val originalUserHome = System.getProperty("user.home")
+        val claudeSkillsDir = File(home, ".claude/skills").apply { mkdirs() }
+        val copilotSkillsDir = File(home, ".copilot/skills")
+        try {
+            // Verify that setReadOnly actually prevents writes on this filesystem;
+            // if not, skip the test (macOS owner bypass).
+            claudeSkillsDir.setReadOnly()
+            val probe = File(claudeSkillsDir, "probe.txt")
+            val blocked = try { probe.createNewFile(); probe.delete(); false } catch (_: Throwable) { true }
+            if (!blocked) {
+                // setReadOnly doesn't block writes for the current user (common on macOS).
+                // Rollback behaviour is verified by code inspection; skip the runtime test.
+                return
+            }
+
+            System.setProperty("user.home", home.absolutePath)
+
+            val root = File(home, "plugin-root").apply { mkdirs() }
+            File(root, "skills/rollback-skill").mkdirs()
+            File(root, "skills/rollback-skill/SKILL.md").writeText("---\nname: rollback-skill\n---\n")
+            val component = PluginComponent.Skill(
+                name = "rollback-skill",
+                sourceDir = File(root, "skills/rollback-skill"),
+                skillFile = File(root, "skills/rollback-skill/SKILL.md"),
+                supportFiles = emptyList()
+            )
+            val pluginManifest = manifest(root, "rollback-plugin")
+
+            val report = PluginInstaller().installPlugin(pluginManifest, listOf(component), InstallScope.Global)
+            // The install must have failed (second destination couldn't be written).
+            assertTrue("expected failure when second destination unwritable: ${report.installed}", report.isFullFailure)
+            // The first destination (.copilot/skills/rollback-skill) should have been
+            // rolled back and therefore must not exist.
+            assertFalse(
+                "copilot side must be rolled back after failure",
+                File(copilotSkillsDir, "rollback-skill").exists()
+            )
+        } finally {
+            claudeSkillsDir.setWritable(true) // allow cleanup
+            home.deleteRecursively()
+            originalUserHome?.let { System.setProperty("user.home", it) }
+                ?: System.clearProperty("user.home")
+        }
     }
 
     private fun newPluginAndProject(name: String): Pair<File, File> {

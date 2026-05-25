@@ -15,11 +15,52 @@ internal object InstallPaths {
 
     private val userHome: File get() = File(System.getProperty("user.home"))
 
-    /** Skills: `<project>/.claude/skills/<name>/` or `~/.copilot/skills/<name>/`. */
-    fun skillDir(skillName: String, scope: InstallScope): File = when (scope) {
-        is InstallScope.Project -> File(scope.projectDir, ".claude/skills/$skillName")
-        is InstallScope.Global -> File(userHome, ".copilot/skills/$skillName")
+    /**
+     * Stable install roots a skill's destinations belong inside, in the same order as
+     * [skillDestinations]. Derived from [scope] alone (no user input) so a path-traversal
+     * in the skill name can't shift the root that containment checks validate against.
+     * [SkillBundleInstaller] zips this with [destinationsFor] to do per-destination
+     * `isInsideDir` checks.
+     */
+    fun skillInstallRoots(scope: InstallScope): List<File> = when (scope) {
+        is InstallScope.Project -> listOf(
+            File(scope.projectDir, ".claude/skills")
+        )
+        is InstallScope.Global -> listOf(
+            File(userHome, ".copilot/skills"),
+            File(userHome, ".claude/skills")
+        )
     }
+
+    /**
+     * Skill dual-write list. At Global scope, both `~/.copilot/skills/<name>/` (read by
+     * Copilot for JetBrains, VS Code Copilot, Copilot CLI) and `~/.claude/skills/<name>/`
+     * (read by Claude Code and Copilot for JetBrains) are written so a single install reaches
+     * every tool. At Project scope only `.claude/skills/<name>/` is needed — every tool
+     * reads it from there, so no second location is required.
+     */
+    private fun skillDestinations(skillName: String, scope: InstallScope): List<File> = when (scope) {
+        is InstallScope.Project -> listOf(File(scope.projectDir, ".claude/skills/$skillName"))
+        is InstallScope.Global -> listOf(
+            File(userHome, ".copilot/skills/$skillName"),
+            File(userHome, ".claude/skills/$skillName")
+        )
+    }
+
+    /**
+     * Primary skill destination (first element of [skillDestinations]). Retained for
+     * [SkillBundleInstaller] compatibility; callers that need all destinations should use
+     * [destinationsFor] instead.
+     *
+     * @deprecated Use [destinationsFor] to get the full destination list so global installs
+     *   dual-write to both `~/.copilot/skills/` and `~/.claude/skills/`.
+     */
+    @Deprecated(
+        "Use destinationsFor(component, plugin, scope) to get all destinations",
+        ReplaceWith("destinationsFor(component, plugin, scope).first()")
+    )
+    fun skillDir(skillName: String, scope: InstallScope): File =
+        skillDestinations(skillName, scope).first()
 
     /** Slash commands → JetBrains "Prompt Files": `<project>/.github/prompts/<name>.prompt.md`. */
     fun promptFile(commandName: String, scope: InstallScope): File = when (scope) {
@@ -60,7 +101,7 @@ internal object InstallPaths {
      * The first element is the **primary** destination — used as the return value of
      * [dev.agentry.jetbrains.install.PluginInstaller.installPlugin]'s `InstalledComponent`
      * (so reports / notifications cite one canonical path). All elements are written, all
-     * are checked by [dev.agentry.jetbrains.install.PluginInstallState.isInstalled], and
+     * are checked by [dev.agentry.jetbrains.install.PluginInstallState.locationsOf], and
      * all are removed on uninstall.
      */
     fun destinationsFor(
@@ -68,7 +109,7 @@ internal object InstallPaths {
         plugin: dev.agentry.jetbrains.model.PluginManifest,
         scope: InstallScope
     ): List<File> = when (component) {
-        is dev.agentry.jetbrains.model.PluginComponent.Skill -> listOf(skillDir(component.name, scope))
+        is dev.agentry.jetbrains.model.PluginComponent.Skill -> skillDestinations(component.name, scope)
         is dev.agentry.jetbrains.model.PluginComponent.Command -> listOf(promptFile(component.name, scope))
         is dev.agentry.jetbrains.model.PluginComponent.Agent -> agentDestinations(component, plugin, scope)
         is dev.agentry.jetbrains.model.PluginComponent.Hook -> listOf(hookDir(plugin.name, scope))

@@ -68,15 +68,54 @@ class AgentrySettingsRoundTripTest : BasePlatformTestCase() {
         }
     }
 
-    fun testDefaultInstallTargetFallsBackOnUnknownString() {
+    fun testDefaultInstallTargetGetterFallsBackForUnknownState() {
+        // Covers the getter's `?: CLAUDE_USER` Elvis-fallback path specifically.
+        // We bypass loadState (which coerces unknown strings) by writing directly to the
+        // raw state field via getState(), so only the getter's fallback is exercised —
+        // not the loadState coercion already covered by testLoadStateCoercesUnknownTargetToClaudeUser.
+        val settings = AgentrySettings.getInstance()
+        // Snapshot the *value* (not the reference) — getState() and state return the same
+        // instance, so capturing `settings.state` then mutating via `settings.getState()`
+        // would mutate `before` too, making the finally restore a no-op.
+        val originalRawTarget = settings.getState().defaultInstallTarget
+        try {
+            settings.getState().defaultInstallTarget = "WAS_REMOVED_IN_NEXT_VERSION"
+            // Unknown enum value must not throw — fall back to CLAUDE_USER.
+            assertEquals(InstallTarget.CLAUDE_USER, settings.defaultInstallTarget)
+        } finally {
+            settings.getState().defaultInstallTarget = originalRawTarget
+        }
+    }
+
+    fun testDefaultInstallTargetIsClaudeUser() {
+        val freshState = AgentrySettings.State()
+        assertEquals("CLAUDE_USER", freshState.defaultInstallTarget)
+    }
+
+    fun testLoadStateCoercesUnknownTargetToClaudeUser() {
+        // Covers the persistence-boundary coercion in loadState — verifies that the
+        // raw state field itself is normalised (not just the typed accessor).
         val settings = AgentrySettings.getInstance()
         val before = settings.state
         try {
-            settings.loadState(
-                AgentrySettings.State(defaultInstallTarget = "WAS_REMOVED_IN_NEXT_VERSION")
-            )
-            // Unknown enum value must not throw — fall back to CLAUDE_PROJECT.
-            assertEquals(InstallTarget.CLAUDE_PROJECT, settings.defaultInstallTarget)
+            val stale = AgentrySettings.State().apply { defaultInstallTarget = "AGENTRY_CACHE" }
+            settings.loadState(stale)
+            assertEquals("CLAUDE_USER", settings.state.defaultInstallTarget)
+            //                          ^^^^^^^^^^^^^^^ raw field, not typed accessor
+        } finally {
+            settings.loadState(before)
+        }
+    }
+
+    fun testLoadStateKeepsKnownTarget() {
+        val settings = AgentrySettings.getInstance()
+        val before = settings.state
+        try {
+            val state = AgentrySettings.State().apply {
+                defaultInstallTarget = InstallTarget.CLAUDE_PROJECT.name
+            }
+            settings.loadState(state)
+            assertEquals(InstallTarget.CLAUDE_PROJECT.name, settings.state.defaultInstallTarget)
         } finally {
             settings.loadState(before)
         }
