@@ -184,7 +184,7 @@ class AgentryToolWindowPanel(private val project: Project) {
                     if (matching.isNotEmpty()) {
                         val copy = AgentryNode.Registry(child.source, child.status, matching.size)
                         matching.forEach { src ->
-                            val skill = AgentryNode.Skill(src.manifest, src.installed)
+                            val skill = AgentryNode.Skill(src.manifest, src.installedScopes)
                             skill.isChecked = src.isChecked
                             copy.add(skill)
                         }
@@ -198,7 +198,7 @@ class AgentryToolWindowPanel(private val project: Project) {
                     if (matching.isNotEmpty()) {
                         val copy = AgentryNode.OrphanGroup(matching.size)
                         matching.forEach { src ->
-                            copy.add(AgentryNode.Orphan(src.installed).apply { isChecked = src.isChecked })
+                            copy.add(AgentryNode.Orphan(src.installed, src.installedScopes).apply { isChecked = src.isChecked })
                         }
                         out.add(copy)
                     }

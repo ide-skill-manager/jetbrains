@@ -1,6 +1,7 @@
 package dev.agentry.jetbrains.ui.toolwindow
 
 import com.intellij.openapi.diagnostic.logger
+import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.PluginInstallState
 import dev.agentry.jetbrains.install.SkillInstaller
 import dev.agentry.jetbrains.model.ComponentKind
@@ -105,7 +106,14 @@ object SkillTreeBuilder {
         }
         val node = registryWithStatus(source, status, manifests.size)
         manifests.forEach { m ->
-            node.add(AgentryNode.Skill(m, installed = m.name in installedSkillNames))
+            node.add(
+                AgentryNode.Skill(
+                    m,
+                    installedScopes = if (m.name in installedSkillNames)
+                        setOf<InstallScope>(InstallScope.Project(File(projectBasePath ?: "")))
+                    else emptySet()
+                )
+            )
         }
         return node
     }
@@ -159,8 +167,8 @@ object SkillTreeBuilder {
         return byKind.map { (kind, items) ->
             val group = AgentryNode.ComponentGroup(kind, items.size)
             items.forEach { c ->
-                val installed = PluginInstallState.locationsOf(c, manifest, projectBasePath).isNotEmpty()
-                group.add(AgentryNode.Component(c, kind, installed))
+                val locs = PluginInstallState.locationsOf(c, manifest, projectBasePath)
+                group.add(AgentryNode.Component(c, kind, installedScopes = locs))
             }
             group
         }
@@ -186,7 +194,13 @@ object SkillTreeBuilder {
         val orphans = installed.filter { it.manifest.name !in knownNames }
         if (orphans.isEmpty()) return
         val group = AgentryNode.OrphanGroup(orphans.size)
-        orphans.forEach { group.add(AgentryNode.Orphan(it)) }
+        orphans.forEach { orphan ->
+            // Orphans came from disk; their on-disk location tells us the scope.
+            val scope: InstallScope = if (projectBasePath != null && orphan.location.absolutePath.startsWith(projectBasePath))
+                InstallScope.Project(File(projectBasePath))
+            else InstallScope.Global
+            group.add(AgentryNode.Orphan(orphan, installedScopes = setOf(scope)))
+        }
         root.add(group)
     }
 
