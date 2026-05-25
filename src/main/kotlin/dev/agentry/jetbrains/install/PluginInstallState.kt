@@ -31,7 +31,7 @@ object PluginInstallState {
         projectBasePath: String?
     ): Set<InstallScope> {
         val scopes = buildList<InstallScope> {
-            projectBasePath?.let { add(InstallScope.Project(File(it))) }
+            projectBasePath?.takeIf { it.isNotBlank() }?.let { add(InstallScope.Project(File(it))) }
             add(InstallScope.Global)
         }
         return scopes.filterTo(mutableSetOf()) { scope ->

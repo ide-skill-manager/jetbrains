@@ -192,12 +192,14 @@ object SkillTreeBuilder {
         val orphans = installed.filter { it.manifest.name !in knownNames }
         if (orphans.isEmpty()) return
         val group = AgentryNode.OrphanGroup(orphans.size)
+        val basePath = projectBasePath?.takeIf { it.isNotBlank() }
+        val projectDirPath = basePath?.let { File(it).toPath() }
         orphans.forEach { orphan ->
             // Orphans came from disk; their on-disk location tells us the scope.
             // Use component-based Path.startsWith to avoid "/proj-other" matching "/proj".
-            val scope: InstallScope = if (projectBasePath != null
-                    && orphan.location.toPath().startsWith(File(projectBasePath).toPath())
-                ) InstallScope.Project(File(projectBasePath))
+            val scope: InstallScope = if (projectDirPath != null
+                    && orphan.location.toPath().startsWith(projectDirPath)
+                ) InstallScope.Project(File(basePath))
                 else InstallScope.Global
             group.add(AgentryNode.Orphan(orphan, installedScopes = setOf(scope)))
         }
@@ -215,16 +217,17 @@ object SkillTreeBuilder {
      * selected. This helper fixes that by always querying both.
      */
     private fun legacyScopesInstalled(projectBasePath: String?): Map<String, Set<InstallScope>> {
+        val basePath = projectBasePath?.takeIf { it.isNotBlank() }
         val installer = SkillInstaller.getInstance()
         val byName = mutableMapOf<String, MutableSet<InstallScope>>()
         // CLAUDE_USER is always meaningful — reads ~/.claude/skills/ regardless of projectBasePath.
-        installer.listInstalled(InstallTarget.CLAUDE_USER, projectBasePath).forEach {
+        installer.listInstalled(InstallTarget.CLAUDE_USER, basePath).forEach {
             byName.getOrPut(it.manifest.name) { mutableSetOf() }.add(InstallScope.Global)
         }
-        if (projectBasePath != null) {
-            installer.listInstalled(InstallTarget.CLAUDE_PROJECT, projectBasePath).forEach {
+        if (basePath != null) {
+            installer.listInstalled(InstallTarget.CLAUDE_PROJECT, basePath).forEach {
                 byName.getOrPut(it.manifest.name) { mutableSetOf() }
-                    .add(InstallScope.Project(File(projectBasePath)))
+                    .add(InstallScope.Project(File(basePath)))
             }
         }
         return byName

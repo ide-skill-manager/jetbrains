@@ -22,14 +22,15 @@ enum class InstallTarget(val displayName: String) {
     fun toScope(projectBasePath: String?): InstallScope = when (this) {
         CLAUDE_USER -> InstallScope.Global
         CLAUDE_PROJECT -> InstallScope.Project(
-            File(projectBasePath ?: error("CLAUDE_PROJECT requires a project base path"))
+            File(projectBasePath?.takeIf { it.isNotBlank() }
+                ?: error("CLAUDE_PROJECT requires a non-blank project base path"))
         )
     }
 
     /** Root directory containing all skills installed at this target. */
     fun baseDir(projectBasePath: String?): File? = when (this) {
         CLAUDE_USER -> File(System.getProperty("user.home"), ".claude/skills")
-        CLAUDE_PROJECT -> projectBasePath?.let { File(it, ".claude/skills") }
+        CLAUDE_PROJECT -> projectBasePath?.takeIf { it.isNotBlank() }?.let { File(it, ".claude/skills") }
     }
 
     /**

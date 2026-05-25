@@ -415,6 +415,41 @@ class PluginInstallerTest : BasePlatformTestCase() {
         assertTrue("locationsOf reports nothing after uninstall, got: $locs", locs.isEmpty())
     }
 
+    fun testUninstallRefusesSymlinkedIntermediateDir() {
+        // Create a synthetic install at <project>/.claude/skills/foo where <project>/.claude
+        // is itself a symlink pointing OUTSIDE the project. The deletion path must refuse.
+        // Use real-FS temp directories so java.nio symlink APIs work (the IntelliJ VFS
+        // temp fixture path is not a real FS path and cannot host symlinks).
+        val base = java.nio.file.Files.createTempDirectory("agentry-test-symlink-intermediate").toFile()
+        try {
+            val projectDir = File(base, "project").apply { mkdirs() }
+            val root = File(base, "plugin").apply { mkdirs() }
+            val realPlace = File(base, "somewhere-else").apply { mkdirs() }
+            // Make <project>/.claude a symlink pointing outside the project.
+            val projectClaude = File(projectDir, ".claude")
+            try {
+                java.nio.file.Files.createSymbolicLink(projectClaude.toPath(), realPlace.toPath())
+            } catch (_: Throwable) {
+                return // FS doesn't allow symlinks; skip
+            }
+            // Plant a file at the install location through the symlink.
+            val planted = File(realPlace, "skills/foo")
+            planted.mkdirs()
+            File(planted, "SKILL.md").writeText("planted")
+
+            val component = PluginComponent.Skill("foo", planted, File(planted, "SKILL.md"), emptyList())
+            val manifest = manifest(root, "symlink-intermediate")
+
+            // Call the uninstall helper directly — it's `internal`.
+            val report = uninstallComponents(manifest, listOf(component), InstallScope.Project(projectDir))
+            assertTrue("refused: ${report.failed.firstOrNull()?.reason}", report.isFullFailure)
+            // And the planted file must still exist (we refused to touch it).
+            assertTrue("planted file still exists", File(planted, "SKILL.md").exists())
+        } finally {
+            base.deleteRecursively()
+        }
+    }
+
     private fun newPluginAndProject(name: String): Pair<File, File> {
         val temp = File(myFixture.tempDirFixture.tempDirPath, "test-${System.nanoTime()}").apply { mkdirs() }
         val root = File(temp, name).apply { mkdirs() }
