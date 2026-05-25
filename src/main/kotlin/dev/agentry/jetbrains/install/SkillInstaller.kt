@@ -74,18 +74,26 @@ class SkillInstaller {
                 if (!staging.renameTo(dest)) {
                     // Cross-filesystem fallback: copy then delete the staging tree.
                     staging.copyRecursively(dest, overwrite = false)
-                    staging.deleteRecursively()
+                    if (!staging.deleteRecursively()) {
+                        log.warn("Failed to clean up '$staging' (leftover files may persist)")
+                    }
                 }
             } catch (e: Throwable) {
                 // Roll back: nuke any half-written dest, restore backup if we had one.
-                dest.deleteRecursively()
+                if (!dest.deleteRecursively()) {
+                    log.warn("Failed to clean up partial install '$dest' during rollback (leftover files may persist)")
+                }
                 if (backup.exists()) backup.renameTo(dest)
                 throw e
             }
             // Success: clean up backup.
-            if (backup.exists()) backup.deleteRecursively()
+            if (backup.exists() && !backup.deleteRecursively()) {
+                log.warn("Failed to clean up '$backup' (leftover files may persist)")
+            }
         } catch (e: Throwable) {
-            staging.deleteRecursively()
+            if (!staging.deleteRecursively()) {
+                log.warn("Failed to clean up '$staging' (leftover files may persist)")
+            }
             throw e
         }
         refreshVfs(dest)
@@ -103,7 +111,12 @@ class SkillInstaller {
     ): Result<Unit> = runCatching {
         val dest = target.resolvePath(projectBasePath, skillName)
         if (dest.exists()) {
-            dest.deleteRecursively()
+            if (!dest.deleteRecursively()) {
+                throw IOException(
+                    "Failed to fully delete '$dest' (deleteRecursively returned false — likely a " +
+                    "permission or open-file issue; check the IDE log for I/O errors)"
+                )
+            }
             refreshVfs(dest.parentFile ?: dest)
             log.info("Uninstalled skill '$skillName' from ${dest.absolutePath}")
         }
