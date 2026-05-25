@@ -32,7 +32,7 @@ Adapted from Chris Ayers's post, March 2026:
 |---|---|---|
 | Skill | `skills/<name>/SKILL.md` or root `SKILL.md` | Project: `<project>/.claude/skills/<name>/` ・ Global: `~/.copilot/skills/<name>/` |
 | Slash command | `commands/<name>.md` | JetBrains "Prompt Files" — `<project>/.github/prompts/<name>.prompt.md` (frontmatter mapped, lossy) |
-| Subagent | `agents/<name>.agent.md` (or `.md` for backward compat) | JetBrains "Chat Agents" — `<project>/.github/agents/<name>.agent.md` (Project) ・ `~/.copilot/agents/<name>.agent.md` (Global) |
+| Subagent | `agents/<name>.agent.md` (or `.md` for backward compat) | JetBrains "Chat Agents", dual-written so one install reaches every tool. Project: `<project>/.github/agents/<name>.agent.md` + `<project>/.claude/agents/<name>.agent.md`. Global: `~/.copilot/agents/<plugin>__<name>.agent.md` + `~/.claude/agents/<plugin>__<name>.agent.md` (filename namespaced by plugin id — both home-level dirs are shared cross-IDE writable surfaces). |
 | Hook | `hooks/hooks.json` + `scripts/` | `<project>/.github/hooks/` (preview as of 2026-03 changelog) |
 | MCP server | `.mcp.json` | IntelliJ MCP config location (see [open questions](#open-questions)) |
 

@@ -7,12 +7,6 @@ import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
 
 /**
- * Recursively copy [source] → [dest], refusing to follow or copy symlinks. Same hardening
- * the merged UI PR added to `SkillInstaller` — symlinks at any level (the source root,
- * subdirectories, individual files) cause a [SecurityException]. Every destination is
- * canonical-path-checked to stay inside [dest].
- */
-/**
  * Split a markdown body into `(frontmatter-without-fences, body)` or `(null, body)` when
  * there's no `---` fence at the top. Used by the installers that need to rewrite a few
  * frontmatter fields while preserving the rest of the file. Hand-rolled — `FrontmatterReader`
@@ -40,6 +34,12 @@ internal fun File.writeTextEnsuringParent(text: String) {
     Files.writeString(toPath(), text)
 }
 
+/**
+ * Recursively copy [source] → [dest], refusing to follow or copy symlinks. Same hardening
+ * the merged UI PR added to `SkillInstaller` — symlinks at any level (the source root,
+ * subdirectories, individual files) cause a [SecurityException]. Every destination is
+ * canonical-path-checked to stay inside [dest].
+ */
 internal fun copySafe(source: File, dest: File) {
     if (Files.isSymbolicLink(source.toPath())) {
         throw SecurityException("Refusing to copy from symlinked source: $source")

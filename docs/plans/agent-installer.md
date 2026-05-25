@@ -9,7 +9,7 @@ Source: [GitHub Docs — Creating custom agents for Copilot cloud agent in your 
 | Question | Answer |
 |---|---|
 | Project-scope path | `<project>/.github/agents/<name>.agent.md` — auto-discovered, no manual registration |
-| Global-scope path | `~/.copilot/agents/<name>.agent.md` — documented by the Copilot for JetBrains [Agent Configuration and Extensibility wiki](https://github.com/microsoft/copilot-intellij-feedback/wiki/Agent-Configuration-and-Extensibility) as `$HOME/.copilot/agents/**/*.agent.md` under "Local Agent Harness, user-level". |
+| Global-scope path | Dual-written: `~/.copilot/agents/<plugin>__<name>.agent.md` AND `~/.claude/agents/<plugin>__<name>.agent.md`. `~/.copilot/agents/` is documented by the Copilot for JetBrains [Agent Configuration and Extensibility wiki](https://github.com/microsoft/copilot-intellij-feedback/wiki/Agent-Configuration-and-Extensibility) as `$HOME/.copilot/agents/**/*.agent.md` under "Local Agent Harness, user-level"; `~/.claude/agents/` is read by Claude Code (mirror of the project-scope dual-write). Filename is namespaced by plugin id because both home-level dirs are shared cross-IDE writable surfaces — two plugins shipping a same-named agent would otherwise collide. |
 | Filename | `<name>.agent.md` is canonical. `.chatmode.md` is legacy-renamed-to; `.md` still accepted. Always write `.agent.md`. |
 | Frontmatter required | `description` (shown in the Copilot Chat dropdown). |
 | Frontmatter optional we pass through | `name`, `model`, `tools`, `target`, `argument-hint` |
@@ -17,7 +17,7 @@ Source: [GitHub Docs — Creating custom agents for Copilot cloud agent in your 
 
 ## Phase 1 — Path resolution + installer
 
-- [ ] `InstallPaths.agentFile(name, scope)` — returns `<project>/.github/agents/<name>.agent.md` (Project) or `~/.copilot/agents/<name>.agent.md` (Global). Replaces the current `skillDir("agent-${name}", scope)` placeholder used by `destFor` + `PluginInstallState`.
+- [x] `InstallPaths.destinationsFor(component, plugin, scope)` — returns every dest the install lands at. Agents dual-write to `.github/agents/` AND `.claude/agents/`; Global-scope filenames are namespaced as `<plugin>__<name>.agent.md`. Single source of truth: `AgentInstaller`, `PluginInstallState`, and `ComponentActions` (uninstall) all resolve through this. (Replaces the prior `skillDir("agent-${name}", scope)` placeholder.)
 - [ ] `installers/AgentInstaller.kt` — copy the source `.md` (or `.agent.md`) into `<dest>` after rewriting frontmatter to:
       1. Ensure `description:` is present. If missing in source, derive from the component's first non-empty paragraph or fall back to `name`. Loader requires it.
       2. Ensure `name:` matches the install-time name. (Same backfill pattern as `SkillBundleInstaller`.)
@@ -31,7 +31,7 @@ Source: [GitHub Docs — Creating custom agents for Copilot cloud agent in your 
       - Project-scope: source has `description` → file lands at `.github/agents/<name>.agent.md`, frontmatter preserved.
       - Project-scope: source missing `description` → installer backfills from the first paragraph (and falls back to `name` if the body is empty).
       - Project-scope: source missing `name` → installer backfills with the component name.
-      - Global-scope: file lands at `~/.copilot/agents/<name>.agent.md` (mocked via `user.home` override).
+      - Global-scope: files land at `~/.copilot/agents/<plugin>__<name>.agent.md` AND `~/.claude/agents/<plugin>__<name>.agent.md` (mocked via `user.home` override). Asserts the plugin-id namespacing so two plugins shipping the same agent name can't overwrite each other.
       - Name-validation: malicious `name = "../etc/passwd"` is refused (same gate as the other installers).
 - [ ] `PluginInstallStateTest` (extend the existing if any, else new pure JUnit) — agent install state detected via `agentFile` rather than the old `skillDir` placeholder.
 
@@ -56,17 +56,12 @@ Source: [GitHub Docs — Creating custom agents for Copilot cloud agent in your 
 
 ## Decisions baked in
 
-- **Project-scope first.** `~/.copilot/agents/` for global is best-effort; we'll ship it but call out the empirical gap in the PR description. If a v1 user reports the global install isn't picked up by JetBrains, we revisit.
+- **Project-scope first.** Global is best-effort; we ship it but call out the empirical gap in the PR description. If a v1 user reports the global install isn't picked up by JetBrains, we revisit. Both project and global paths dual-write to `.github/agents/` AND `.claude/agents/`; global filenames are namespaced by plugin id (`<plugin>__<name>.agent.md`) because both home dirs are shared cross-IDE writable surfaces.
 - **Always write `.agent.md`** — never `.md` or `.chatmode.md`. The loader accepts the canonical form on every IDE.
 - **Description fallback policy.** Source has it → keep. Missing → use the first non-empty paragraph from the body, trimmed to 120 chars. Body empty → use `"Custom agent: $name"`. The loader rejects files with no description; missing it would break the install in the user's face.
 
 ## Follow-ups (not blocking this PR)
 
-- **Dual-write to `.claude/agents/`** — the Copilot for JetBrains wiki lists
-  `$PROJECT_ROOT/.claude/agents/**/*.agent.md` as a valid pickup path alongside
-  `.github/agents/`. Adding a second write site lets one Agentry install reach both
-  Copilot for JetBrains and Claude Code from a single source. Same shape as the
-  cross-tool dual-write we should add for skills (`.github/skills/` + `.claude/skills/`).
 - **Hook filename pattern fix** — the wiki documents hooks as `*.hooks.json` (flat,
   plural extension) at `.github/hooks/`. Our `HookInstaller` writes
   `.github/hooks/<plugin>/hooks.json` (directory per plugin). Real bug — the current
