@@ -59,9 +59,11 @@ object PluginInstallState {
                 is InstallScope.Project -> scope.projectDir
                 is InstallScope.Global -> File(System.getProperty("user.home"))
             }
-            val canonicalRoot = expectedRoot.canonicalFile.toPath()
-            val canonicalPrimary = primaryFile.canonicalFile.toPath()
-            canonicalPrimary.startsWith(canonicalRoot)
+            runCatching {
+                val canonicalRoot = expectedRoot.canonicalFile.toPath()
+                val canonicalPrimary = primaryFile.canonicalFile.toPath()
+                canonicalPrimary.startsWith(canonicalRoot)
+            }.getOrElse { false }
         }
     }
 }

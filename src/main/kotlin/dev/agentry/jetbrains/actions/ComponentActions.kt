@@ -161,14 +161,6 @@ internal fun uninstallComponents(
     val installed = mutableListOf<dev.agentry.jetbrains.install.InstalledComponent>()
     val failed = mutableListOf<dev.agentry.jetbrains.install.ComponentError>()
     val pluginNameOk = InputValidation.isValidComponentName(plugin.name)
-    // Build the expected install root from scope alone (no user input), and verify every
-    // canonical destination resolves under it. This catches intermediate-dir symlinks (e.g.
-    // <project>/.claude is itself a symlink to /) even though the leaf isn't a symlink.
-    val expectedRoot: File = when (scope) {
-        is InstallScope.Project -> scope.projectDir
-        is InstallScope.Global -> File(System.getProperty("user.home"))
-    }
-    val canonicalRoot = expectedRoot.canonicalFile
     components.forEach { c ->
         if (!pluginNameOk || !InputValidation.isValidComponentName(c.name)) {
             failed += dev.agentry.jetbrains.install.ComponentError(
@@ -181,6 +173,16 @@ internal fun uninstallComponents(
         // aborts the whole component to avoid following the link outside the install root.
         val destinations = InstallPaths.destinationsFor(c, plugin, scope)
         runCatching {
+            // Build the expected install root from scope alone (no user input), and verify every
+            // canonical destination resolves under it. This catches intermediate-dir symlinks (e.g.
+            // <project>/.claude is itself a symlink to /) even though the leaf isn't a symlink.
+            // Resolved INSIDE runCatching so an IOException here fails this component only —
+            // the remaining components in the batch still get processed.
+            val expectedRoot: File = when (scope) {
+                is InstallScope.Project -> scope.projectDir
+                is InstallScope.Global -> File(System.getProperty("user.home"))
+            }
+            val canonicalRoot = expectedRoot.canonicalFile
             destinations.forEach { dest ->
                 val destPath = dest.toPath()
                 if (!Files.exists(destPath, LinkOption.NOFOLLOW_LINKS)) return@forEach

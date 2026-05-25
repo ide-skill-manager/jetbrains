@@ -46,10 +46,13 @@ internal class SkillBundleInstaller : ComponentInstaller<PluginComponent.Skill> 
                 "Resolved skill dest escapes install root: $dest (root=$root)"
             }
         }
-        // Canonical-root containment check: guard against intermediate symlinks (e.g.
-        // <project>/.claude -> /etc/). isInsideDir uses the lexical path so it would pass
-        // even if .claude resolves outside the project. We re-check with canonical paths,
-        // which collapse all symlinks, to catch such escapes.
+        // Second containment check — intermediate-symlink defence: InputValidation.isInsideDir
+        // (above) already compares canonical paths, so it catches dest-name traversal attacks.
+        // However, even if each dest is "inside" its computed install root, an intermediate
+        // directory symlink (e.g. <project>/.claude -> /etc/) makes the install root itself
+        // escape the expected project or home base. The check below re-resolves the canonical
+        // path against the *scope-derived* base (projectDir or user.home) — not the install
+        // sub-root — to catch that class of escape.
         val expectedRoot: File = when (scope) {
             is InstallScope.Project -> scope.projectDir
             is InstallScope.Global -> File(System.getProperty("user.home"))

@@ -74,13 +74,16 @@ class AgentrySettingsRoundTripTest : BasePlatformTestCase() {
         // raw state field via getState(), so only the getter's fallback is exercised —
         // not the loadState coercion already covered by testLoadStateCoercesUnknownTargetToClaudeUser.
         val settings = AgentrySettings.getInstance()
-        val before = settings.state
+        // Snapshot the *value* (not the reference) — getState() and state return the same
+        // instance, so capturing `settings.state` then mutating via `settings.getState()`
+        // would mutate `before` too, making the finally restore a no-op.
+        val originalRawTarget = settings.getState().defaultInstallTarget
         try {
             settings.getState().defaultInstallTarget = "WAS_REMOVED_IN_NEXT_VERSION"
             // Unknown enum value must not throw — fall back to CLAUDE_USER.
             assertEquals(InstallTarget.CLAUDE_USER, settings.defaultInstallTarget)
         } finally {
-            settings.loadState(before)
+            settings.getState().defaultInstallTarget = originalRawTarget
         }
     }
 
