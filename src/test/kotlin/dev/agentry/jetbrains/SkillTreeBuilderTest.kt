@@ -5,6 +5,7 @@ import dev.agentry.jetbrains.install.InstallScope
 import dev.agentry.jetbrains.install.PluginInstallState
 import dev.agentry.jetbrains.install.SkillInstaller
 import dev.agentry.jetbrains.install.installers.InstallPaths
+import dev.agentry.jetbrains.model.InstalledSkill
 import dev.agentry.jetbrains.model.InstallTarget
 import dev.agentry.jetbrains.model.ManifestDialect
 import dev.agentry.jetbrains.model.PluginAuthor
@@ -13,6 +14,8 @@ import dev.agentry.jetbrains.model.PluginManifest
 import dev.agentry.jetbrains.model.RegistrySource
 import dev.agentry.jetbrains.model.SkillManifest
 import dev.agentry.jetbrains.registry.RegistryManager
+import dev.agentry.jetbrains.ui.toolwindow.AgentryNode
+import dev.agentry.jetbrains.ui.toolwindow.SkillTreeBuilder
 import java.io.File
 
 class SkillTreeBuilderTest : BasePlatformTestCase() {
@@ -235,6 +238,51 @@ class SkillTreeBuilderTest : BasePlatformTestCase() {
         } finally {
             cacheDir.deleteRecursively()
         }
+    }
+
+    // --- Regression: Fix 1 — orphan scope from target field, not path-prefix ---
+
+    /**
+     * A CLAUDE_USER install whose on-disk location happens to sit *inside* the project root
+     * (e.g. the user opened their home dir as a project, so ~/.claude/skills/X starts with
+     * projectBasePath) must still be classified as Global, not Project.
+     *
+     * The old path-prefix heuristic got this wrong. The fix uses orphan.target directly.
+     */
+    fun testOrphanScopeDerivedFromTargetNotPathPrefix() {
+        // Make project root == the temp dir so that the installed skill's location
+        // is guaranteed to start with projectBasePath — the worst case for the old heuristic.
+        val projectDir = File(myFixture.tempDirFixture.tempDirPath)
+        val skillManifest = SkillManifest(name = "ambig", version = "1.0.0", displayName = "Ambig")
+        // Location inside projectDir but the target says CLAUDE_USER (Global).
+        val orphanLocation = File(projectDir, ".claude/skills/ambig")
+        val installed = InstalledSkill(
+            manifest = skillManifest,
+            location = orphanLocation,
+            target = InstallTarget.CLAUDE_USER
+        )
+
+        val root = AgentryNode.Root()
+        SkillTreeBuilder.addOrphans(root, listOf(installed), emptyList(), projectDir.absolutePath)
+
+        // Extract the single orphan node from the OrphanGroup.
+        val orphanGroup = (0 until root.childCount)
+            .map { root.getChildAt(it) }
+            .filterIsInstance<AgentryNode.OrphanGroup>()
+            .firstOrNull()
+        assertNotNull("OrphanGroup must be added to root", orphanGroup)
+
+        val orphanNode = (0 until orphanGroup!!.childCount)
+            .map { orphanGroup.getChildAt(it) }
+            .filterIsInstance<AgentryNode.Orphan>()
+            .firstOrNull { it.installed.manifest.name == "ambig" }
+        assertNotNull("Orphan node for 'ambig' must exist", orphanNode)
+
+        assertEquals(
+            "CLAUDE_USER orphan inside project dir must be classified as Global, not Project",
+            setOf<InstallScope>(InstallScope.Global),
+            orphanNode!!.installedScopes
+        )
     }
 
     private fun manifest(root: File, name: String): PluginManifest = PluginManifest(

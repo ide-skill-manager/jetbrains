@@ -178,7 +178,7 @@ object SkillTreeBuilder {
      * present. Carried over from the original `SkillTreeBuilder` so disabling a registry
      * doesn't strand the user's skills.
      */
-    private fun addOrphans(
+    internal fun addOrphans(
         root: AgentryNode.Root,
         installed: List<dev.agentry.jetbrains.model.InstalledSkill>,
         sources: List<RegistrySource>,
@@ -193,14 +193,16 @@ object SkillTreeBuilder {
         if (orphans.isEmpty()) return
         val group = AgentryNode.OrphanGroup(orphans.size)
         val basePath = projectBasePath?.takeIf { it.isNotBlank() }
-        val projectDirPath = basePath?.let { File(it).toPath() }
         orphans.forEach { orphan ->
-            // Orphans came from disk; their on-disk location tells us the scope.
-            // Use component-based Path.startsWith to avoid "/proj-other" matching "/proj".
-            val scope: InstallScope = if (projectDirPath != null
-                    && orphan.location.toPath().startsWith(projectDirPath)
-                ) InstallScope.Project(File(basePath))
-                else InstallScope.Global
+            // Use the recorded install target rather than a path-prefix heuristic. A path
+            // prefix check misclassifies CLAUDE_USER installs when the project root happens
+            // to be a parent of the home directory (e.g. the user opened ~/ as a project).
+            val scope: InstallScope = when (orphan.target) {
+                InstallTarget.CLAUDE_USER -> InstallScope.Global
+                InstallTarget.CLAUDE_PROJECT ->
+                    if (basePath != null) InstallScope.Project(File(basePath))
+                    else InstallScope.Global  // shouldn't be reachable; defensive fallback
+            }
             group.add(AgentryNode.Orphan(orphan, installedScopes = setOf(scope)))
         }
         root.add(group)

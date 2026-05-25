@@ -42,10 +42,10 @@ The picker is a `ComboBox<InstallTarget>` seeded from
 `AgentryToolWindowPanel` state — **not** written back to Settings — so the user
 can flip it for one install without changing their global default.
 
-When `project.basePath == null`, `CLAUDE_PROJECT` is rendered disabled with
-tooltip `"Open a project first to install at project scope."`; if the project
-closes while `CLAUDE_PROJECT` is selected, the picker falls back to
-`CLAUDE_USER`.
+When `project.basePath == null`, `CLAUDE_PROJECT` is omitted from the combo's model
+entirely (model filtering is the reliable mechanism in Swing — renderers can style a
+disabled item but don't prevent selection). If the project closes mid-session the
+combo retains its prior model until the tool window is reopened; acceptable for v0.1.2.
 
 **Tool window — row badges.** Layout becomes:
 
